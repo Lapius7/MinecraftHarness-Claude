@@ -458,6 +458,7 @@ public final class HarnessAgent {
         ToolHost.Turn turn = new ToolHost.Turn(playerName, filmMode, level, stats);
         turn.reviewExplicit = job.reviewExplicit ? job.review : null;
         boolean ran = runBackend(playerName, userMessage, filmMode, level, session, turn, job, model);
+        host.flushToolChat(turn);
         if (!ran) return;
 
         long mainTokens = stats.budgetTokens();
@@ -563,6 +564,7 @@ public final class HarnessAgent {
             String msg = dev.minecraftharness.review.ReviewPrompt.build(rl, round, loop.maxLabel(), request,
                 anchorId == null ? "" : anchorId);
             runBackend(player, msg, job.film, job.level, session, rt, job, model);
+            host.flushToolChat(rt);
             if (job.cancelled || shutdown) {
                 stop = loop.afterRound(null, true);
                 break;
@@ -582,11 +584,13 @@ public final class HarnessAgent {
                     JsonObject u = new JsonObject();
                     u.addProperty("count", (int) Math.min(added, 16));
                     host.callMainThread("undo_many", u);
+                    stats.markLastRoundUndone();
                 }
             }
             if (stop != dev.minecraftharness.review.ReviewLoop.Stop.NONE) break;
         }
         stats.setReviewStop(stop.label());
+        stats.setReviewVerdict(stop.verdict());
         host.progress().reviewEnd(player);
         dev.minecraftharness.summary.TurnStats.Review r = stats.review();
         String note = "レビュー終了(" + stop.label() + "): " + (r == null ? 0 : r.rounds()) + " 回点検"

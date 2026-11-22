@@ -64,4 +64,32 @@ class SummaryTests {
         assertEquals(DetailLevel.FULL, DetailLevel.parse("FULL", DetailLevel.SHORT));
         assertEquals(DetailLevel.SHORT, DetailLevel.parse("x", DetailLevel.SHORT));
     }
+
+    @Test void reviewRoundsAndVerdictShownInSummary() {
+        TurnStats s = stats();
+        s.addReview(3, 1, "窓を足した");
+        s.addReview(2, 3, "");
+        s.markLastRoundUndone();
+        s.setReviewStop(dev.minecraftharness.review.ReviewLoop.Stop.WORSE.label());
+        s.setReviewVerdict(dev.minecraftharness.review.ReviewLoop.Stop.WORSE.verdict());
+        TurnStats.Review r = s.review();
+        assertEquals(2, r.roundList().size());
+        assertEquals(2, r.roundList().get(0).fixed());
+        assertTrue(r.roundList().get(1).undone());
+        String full = plain(SummaryRenderer.render(DetailLevel.FULL, s, null));
+        assertTrue(full.contains("2 回点検"));
+        assertTrue(full.contains("判定: 悪化で undo"));
+        assertTrue(full.contains("1 回目") && full.contains("見つけた 3 件 / 直した 2 件 / 残り 1 件"));
+        assertTrue(full.contains("悪化したので元に戻した"));
+        assertTrue(plain(SummaryRenderer.render(DetailLevel.SHORT, s, null)).contains("レビュー 2 回 悪化で undo"));
+    }
+
+    @Test void verdictForEveryStop() {
+        var S = dev.minecraftharness.review.ReviewLoop.Stop.class;
+        assertEquals("通過", dev.minecraftharness.review.ReviewLoop.Stop.CLEAN.verdict());
+        for (var st : new dev.minecraftharness.review.ReviewLoop.Stop[] {
+            dev.minecraftharness.review.ReviewLoop.Stop.ROUNDS, dev.minecraftharness.review.ReviewLoop.Stop.TIME,
+            dev.minecraftharness.review.ReviewLoop.Stop.TOKENS}) assertEquals("上限到達", st.verdict());
+        assertNotNull(S);
+    }
 }

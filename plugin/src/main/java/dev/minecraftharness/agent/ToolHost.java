@@ -53,6 +53,8 @@ public final class ToolHost {
         public volatile dev.minecraftharness.review.ReviewLevel reviewChoice;
         public volatile boolean reviewRequested;
         public volatile String reviewAnchor;
+        /** Folds runs of the same tool into one chat line. */
+        public final dev.minecraftharness.progress.ToolChat toolChat = new dev.minecraftharness.progress.ToolChat();
 
         /**
          * The model asked for a check. The request itself always counts (unless it said off), so a
@@ -262,11 +264,32 @@ public final class ToolHost {
      */
     public JsonObject dispatch(String toolName, JsonObject args, Turn turn) {
         progress.toolStart(turn.playerName, toolName);
+        chatTool(turn, toolName, args);
         try {
             return dispatchInner(toolName, args, turn);
         } finally {
             progress.toolEnd(turn.playerName);
         }
+    }
+
+    /** One chat line per tool use (config progress.toolChat, default on); runs of the same tool are folded. */
+    private void chatTool(Turn turn, String toolName, JsonObject args) {
+        if (turn.filmMode || !plugin.getConfig().getBoolean("progress.toolChat", true)) return;
+        List<String> lines;
+        synchronized (turn.toolChat) {
+            lines = turn.toolChat.onTool(toolName, dev.minecraftharness.progress.ToolChat.describe(args));
+        }
+        for (String l : lines) notifyChat(turn.playerName, l, false);
+    }
+
+    /** Sends the folded "same tool again" line left over at the end of a prompt. */
+    public void flushToolChat(Turn turn) {
+        if (turn.filmMode || !plugin.getConfig().getBoolean("progress.toolChat", true)) return;
+        String tail;
+        synchronized (turn.toolChat) {
+            tail = turn.toolChat.flush();
+        }
+        if (tail != null) notifyChat(turn.playerName, tail, false);
     }
 
     /** The model picks how carefully the build is checked; the check itself runs after its turn. */

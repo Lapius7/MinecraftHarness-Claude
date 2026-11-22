@@ -47,7 +47,8 @@ public final class SummaryRenderer {
         if (s.blocks() >= 0) parts.add(count(s.blocks()) + " ブロック");
         if (!s.anchors().isEmpty()) parts.add(String.join(",", s.anchors()));
         TurnStats.Review r = s.review();
-        if (r != null && r.rounds() > 0) parts.add("レビュー " + r.rounds() + " 回");
+        if (r != null && r.rounds() > 0) parts.add("レビュー " + r.rounds() + " 回"
+            + (r.verdict() == null || r.verdict().isBlank() ? "" : " " + r.verdict()));
         if (costUsd != null) parts.add(money(costUsd));
         if (parts.isEmpty()) parts.add("数値は取得できませんでした");
         return Component.text("📊 ", NamedTextColor.AQUA)
@@ -82,12 +83,25 @@ public final class SummaryRenderer {
         out = line(out, "建築 ID", s.anchors().isEmpty() ? "-" : String.join(", ", s.anchors()));
         TurnStats.Review r = s.review();
         if (r != null) {
-            out = line(out, "レビュー", r.rounds() + " 回 (" + blankDash(r.stop()) + ") 見つけた問題 " + r.found()
-                + " / 残り " + r.remaining());
+            out = line(out, "レビュー", reviewLine(r));
+            for (TurnStats.Round rd : r.roundList()) out = line(out, "  " + rd.number() + " 回目", roundLine(rd));
             for (String f : r.fixes()) out = line(out, "  直した内容", f);
         }
         if (costUsd != null) out = line(out, "概算料金", money(costUsd));
         return out;
+    }
+
+    /** "2 回点検 / 判定: 通過(問題なし) / 見つけた問題 3 / 残り 0". */
+    static String reviewLine(TurnStats.Review r) {
+        String verdict = r.verdict() == null || r.verdict().isBlank() ? "-" : r.verdict();
+        String reason = r.stop() == null || r.stop().isBlank() ? "" : "(" + r.stop() + ")";
+        return r.rounds() + " 回点検 / 判定: " + verdict + reason
+            + " / 見つけた問題 " + r.found() + " / 残り " + r.remaining();
+    }
+
+    static String roundLine(TurnStats.Round rd) {
+        return "見つけた " + rd.found() + " 件 / 直した " + rd.fixed() + " 件 / 残り " + rd.remaining() + " 件"
+            + (rd.undone() ? "(悪化したので元に戻した)" : "");
     }
 
     private static String blankDash(String v) {
