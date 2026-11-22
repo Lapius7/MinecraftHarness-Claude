@@ -112,6 +112,7 @@ export class TelemetryHub {
   private traces: InferenceTrace[] = [];
   private sseClients = new Set<http.ServerResponse>();
   private hudCallback: ((payload: HudPayload) => void) | null = null;
+  private inferenceDoneCallback: ((trace: InferenceTrace) => void) | null = null;
 
   private callSeq = 0;
   private promptRunSeq = 0;
@@ -166,6 +167,10 @@ export class TelemetryHub {
 
   onHudUpdate(cb: (payload: HudPayload) => void): void {
     this.hudCallback = cb;
+  }
+
+  onInferenceDone(cb: (trace: InferenceTrace) => void): void {
+    this.inferenceDoneCallback = cb;
   }
 
   beginPromptRun(playerName: string, prompt: string, thinking: string, receivedAt = Date.now()): void {
@@ -493,6 +498,7 @@ export class TelemetryHub {
     this.logConsoleSummary(trace);
     this.broadcast("trace_done", trace);
     this.scheduleHudEmit(true);
+    this.inferenceDoneCallback?.(trace);
   }
 
   markToolStart(toolName: string): void {
@@ -742,6 +748,24 @@ function resolveOpenDesignBase(stateDir?: string): URL {
   }
 }
 
+function resolveOpenCodeGoBase(stateDir?: string): URL {
+  const raw = loadEnvValue("OPENCODE_GO_BASE_URL", stateDir) || "https://opencode.ai/zen/go/v1";
+  try {
+    return new URL(raw);
+  } catch {
+    return new URL("https://opencode.ai/zen/go/v1");
+  }
+}
+
+function resolveOpenRouterBase(stateDir?: string): URL {
+  const raw = loadEnvValue("OPENROUTER_BASE_URL", stateDir) || "https://openrouter.ai/api/v1";
+  try {
+    return new URL(raw);
+  } catch {
+    return new URL("https://openrouter.ai/api/v1");
+  }
+}
+
 export interface StreamedBuildOpEvent extends StreamedOpEvent {
   callIndex: number;
   toolName: string;
@@ -752,6 +776,7 @@ export interface TelemetryProxyOptions {
   port?: number;
   upstreamBase?: string;
   getTargetReasoningEffort?: () => string;
+  getActiveSessionId?: () => string;
   onStreamedBuildOp?: (ev: StreamedBuildOpEvent) => void;
   openclawConfigPath?: string;
   openclawStateDir?: string;
@@ -759,21 +784,26 @@ export interface TelemetryProxyOptions {
 
 function loadEnvValue(varName: string, stateDir?: string): string | undefined {
   if (process.env[varName]) return process.env[varName];
-  if (!stateDir) return undefined;
-  const candidates = [
-    path.join(stateDir, ".env"),
-    path.resolve(stateDir, "..", "..", ".env"),
-  ];
-  for (const envFile of candidates) {
-    if (!existsSync(envFile)) continue;
-    for (const line of readFileSync(envFile, "utf8").split(/\r?\n/)) {
-      const trimmed = line.trim();
-      if (!trimmed || trimmed.startsWith("#")) continue;
-      const eq = trimmed.indexOf("=");
-      if (eq > 0 && trimmed.slice(0, eq).trim() === varName) {
-        return trimmed.slice(eq + 1).trim();
+  if (stateDir) {
+    const candidates = [
+      path.join(stateDir, ".env"),
+      path.resolve(stateDir, "..", "..", ".env"),
+    ];
+    for (const envFile of candidates) {
+      if (!existsSync(envFile)) continue;
+      for (const line of readFileSync(envFile, "utf8").split(/\r?\n/)) {
+        const trimmed = line.trim();
+        if (!trimmed || trimmed.startsWith("#")) continue;
+        const eq = trimmed.indexOf("=");
+        if (eq > 0 && trimmed.slice(0, eq).trim() === varName) {
+          const val = trimmed.slice(eq + 1).trim();
+          if (val) return val;
+        }
       }
     }
+  }
+  if (varName === "OPENCODE_GO_API_KEY") {
+    return loadEnvValue("OPENCODE_API_KEY", stateDir);
   }
   return undefined;
 }
@@ -821,6 +851,24 @@ function resolveFallbackTarget(
         modelId,
       };
     }
+    if (fallbackProviderId === "opencode-go") {
+      const oc = resolveOpenCodeGoBase(stateDir);
+      return {
+        upstreamUrl: oc,
+        targetPath: oc.pathname.replace(/\/+$/, "") + "/chat/completions",
+        apiKey,
+        modelId,
+      };
+    }
+    if (fallbackProviderId === "openrouter") {
+      const or = resolveOpenRouterBase(stateDir);
+      return {
+        upstreamUrl: or,
+        targetPath: or.pathname.replace(/\/+$/, "") + "/chat/completions",
+        apiKey,
+        modelId,
+      };
+    }
     const baseUrl = typeof p.baseUrl === "string" ? p.baseUrl : "";
     const route = /\/providers\/([a-f0-9]{24})\/v1/.exec(baseUrl);
     if (route) {
@@ -862,6 +910,8 @@ export function startCerebrasTelemetryProxy(
       const reqPath = clientReq.url ?? "/";
       const commandCode = reqPath.startsWith("/commandcode/v1/");
       const openDesign = reqPath.startsWith("/opendesign/v1/");
+      const openCodeGo = reqPath.startsWith("/opencode-go/v1/");
+      const openRouter = reqPath.startsWith("/openrouter/v1/");
       let upstreamUrl = cerebrasUrl;
       let targetPath = reqPath.startsWith("/v1") ? reqPath : `/v1${reqPath.startsWith("/") ? "" : "/"}${reqPath}`;
       if (commandCode) {
@@ -870,6 +920,14 @@ export function startCerebrasTelemetryProxy(
       } else if (openDesign) {
         upstreamUrl = resolveOpenDesignBase(opts.openclawStateDir);
         const suffix = reqPath.slice("/opendesign/v1".length);
+        targetPath = upstreamUrl.pathname.replace(/\/+$/, "") + suffix;
+      } else if (openCodeGo) {
+        upstreamUrl = resolveOpenCodeGoBase(opts.openclawStateDir);
+        const suffix = reqPath.slice("/opencode-go/v1".length);
+        targetPath = upstreamUrl.pathname.replace(/\/+$/, "") + suffix;
+      } else if (openRouter) {
+        upstreamUrl = resolveOpenRouterBase(opts.openclawStateDir);
+        const suffix = reqPath.slice("/openrouter/v1".length);
         targetPath = upstreamUrl.pathname.replace(/\/+$/, "") + suffix;
       }
       if (reqPath.startsWith("/providers/")) {
@@ -988,6 +1046,22 @@ export function startCerebrasTelemetryProxy(
       delete headers["content-length"];
       // Force uncompressed identity encoding so SSE lines can be tee-parsed cleanly with zero gzip buffering
       headers["accept-encoding"] = "identity";
+      if (openCodeGo) {
+        if (!headers["x-opencode-session"]) {
+          headers["x-opencode-session"] = opts.getActiveSessionId?.() || "minecraftharness-default-session";
+        }
+        if (!headers.authorization || headers.authorization === "Bearer " || headers.authorization === "Bearer") {
+          const fallbackKey = loadEnvValue("OPENCODE_GO_API_KEY", opts.openclawStateDir);
+          if (fallbackKey) headers.authorization = `Bearer ${fallbackKey}`;
+        }
+      } else if (openRouter) {
+        if (!headers["http-referer"]) {
+          headers["http-referer"] = "https://github.com/ykundesu/MinecraftHarness";
+        }
+        if (!headers["x-title"]) {
+          headers["x-title"] = "MinecraftHarness";
+        }
+      }
       if (forwardBody.length > 0) {
         headers["content-length"] = String(forwardBody.length);
       }
@@ -1095,6 +1169,12 @@ export function startCerebrasTelemetryProxy(
                       authorization: `Bearer ${fb.apiKey}`,
                       "content-length": String(fbBody.length),
                     };
+                    if (fallbackProviderId === "opencode-go" && !fbHeaders["x-opencode-session"]) {
+                      fbHeaders["x-opencode-session"] = opts.getActiveSessionId?.() || "minecraftharness-default-session";
+                    } else if (fallbackProviderId === "openrouter") {
+                      if (!fbHeaders["http-referer"]) fbHeaders["http-referer"] = "https://github.com/ykundesu/MinecraftHarness";
+                      if (!fbHeaders["x-title"]) fbHeaders["x-title"] = "MinecraftHarness";
+                    }
                     trace!.model = fb.modelId;
                     console.log(`[Telemetry] #${trace!.callNumber} failing over to MH_FALLBACK_PROVIDER=${fallbackProviderId} (${fb.modelId})`);
                     hub.markRetry(trace!, attempt + 1, 0);
@@ -1287,7 +1367,7 @@ export function startCerebrasTelemetryProxy(
   });
 
   proxy.listen(port, host, () => {
-    console.log(`[Telemetry] Inference telemetry listening on http://${host}:${port} (Cerebras, Command Code, OpenDesign)`);
+    console.log(`[Telemetry] Inference telemetry listening on http://${host}:${port} (Cerebras, Command Code, OpenDesign, OpenCode Go, OpenRouter)`);
   });
 
   return proxy;

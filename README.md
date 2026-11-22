@@ -38,12 +38,12 @@ Type one line in chat (`!<prompt>`) and watch AI design original builds, interio
 ## Quick Start (Windows — 3 Steps)
 
 ### Prerequisites
-- **Java 21+** (for PaperMC 1.21.x & Gradle build)
+- **Java 21+** (Java 25+ if running PaperMC 26.x)
 - **Node.js 20+** (for the Bridge)
-- **Minecraft Java Edition 1.21.x** (tested on PaperMC 1.21.4; compatible with Paper/Purpur 1.21.0–1.21.x, vanilla client or Fabric + Iris Shaders)
-- An API key for Cerebras or any OpenAI Chat Completions-compatible model with tool calling
+- **Minecraft Java Edition 1.21.x / 26.x** (tested on PaperMC 1.21.4; compatible with Paper/Purpur **1.21.0–1.21.x & 26.x**, vanilla client or Fabric + Iris Shaders)
+- An API key for Cerebras, OpenCode Go, OpenRouter, OpenDesign Go, Command Code, or any OpenAI Chat Completions-compatible model with tool calling
 
-> **Pre-built Plugin JAR**: You can also download `MinecraftHarness-0.1.0.jar` directly from [GitHub Releases](https://github.com/ykundesu/MinecraftHarness/releases) and drop it into your PaperMC `plugins/` folder (then run the `bridge/` server locally).
+> **Pre-built Plugin JAR**: You can also download `MinecraftHarness-*.jar` directly from [GitHub Releases](https://github.com/ykundesu/MinecraftHarness/releases) (every push to `main` automatically builds and uploads the latest JAR to a Draft Release via GitHub Actions) and drop it into your PaperMC `plugins/` folder.
 
 ### 1. Configure your API key
 Copy `.env.example` to `.env` in the project root and set your key:
@@ -96,10 +96,16 @@ Use `set-provider.ps1` (or `node bridge/provider-config.mjs`)—Direct Mode read
 .\set-provider.ps1 -List
 .\set-provider.ps1 cerebras
 .\set-provider.ps1 opendesign      # DeepSeek V4.1 Flash (OpenDesign Go, OPENDESIGN_API_KEY)
+.\set-provider.ps1 opencode-go     # OpenCode Go (OPENCODE_GO_API_KEY or OPENCODE_API_KEY; auto x-opencode-session header)
+.\set-provider.ps1 openrouter      # OpenRouter (OPENROUTER_API_KEY)
+.\set-provider.ps1 openrouter -Model "deepseek/deepseek-r1"   # Any OpenRouter model ID
 .\set-provider.ps1 commandcode
 ```
 
-You can also switch models directly **in-game** with `/mh model` (clickable chat menu + Tab completion) or from the live Telemetry Dashboard (`http://127.0.0.1:25581/`).
+You can also switch models directly **in-game** with `/mh model` (clickable chat menu + Tab completion) or from the live Telemetry Dashboard (`http://127.0.0.1:25581/`). Any model on an existing provider can also be selected dynamically on the fly—for example:
+- `/mh model opencode-go/kimi-k2.5`
+- `/mh model openrouter/anthropic/claude-sonnet-4.5`
+- `/mh model openrouter/<any-model-id>`
 
 To register any HTTPS OpenAI Chat Completions-compatible provider (OpenAI, OpenRouter, Groq, DeepSeek, etc.):
 ```powershell
@@ -111,7 +117,7 @@ Put `MY_PROVIDER_API_KEY=...` in `.env` and select it with `.\set-provider.ps1 m
 
 ## In-Game Commands
 - `!<prompt>` or `/mh <prompt>` — Build, edit, or create minigames at your gaze target
-- `/mh model [name]` — Show clickable model selector in chat or switch active provider/model live (e.g. `/mh model cerebras`, `/mh model opendesign`, `/mh model opendesign/deepseek-v4.1-flash`)
+- `/mh model [name]` — Show clickable model selector in chat or switch active provider/model live (e.g. `/mh model cerebras`, `/mh model opendesign`, `/mh model opencode-go`, `/mh model openrouter/deepseek/deepseek-v3.2`)
 - `!new` — Reset conversation history for your player
 - `/mh undo` / `/mh reset` — Restore terrain & remove spawned entities cleanly
 - `/mh shift <du>` / `/mh shift <dr> <du> <df>` — Shift the most recent structure by an offset (e.g. `/mh shift -3` lowers it by 3 blocks)

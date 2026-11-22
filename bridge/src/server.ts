@@ -60,6 +60,9 @@ function loadDotEnvInto(env: NodeJS.ProcessEnv): void {
       }
     }
   }
+  if (!env.OPENCODE_GO_API_KEY && env.OPENCODE_API_KEY) {
+    env.OPENCODE_GO_API_KEY = env.OPENCODE_API_KEY;
+  }
 }
 
 function buildOpenClawEnv(): NodeJS.ProcessEnv {
@@ -272,18 +275,73 @@ function selectConfiguredModel(targetRaw: string): {
     return { ok: false, error: "Model target is empty" };
   }
   const { models } = listConfiguredModels();
-  const match =
+  const rawTrimmed = targetRaw.trim();
+  const config = readOpenClawConfigObject();
+  const providers = ((config.models as Record<string, unknown> | undefined)?.providers ?? {}) as Record<
+    string,
+    Record<string, unknown>
+  >;
+
+  let match =
     models.find((m) => m.ref.toLowerCase() === query) ??
     models.find((m) => m.provider.toLowerCase() === query) ??
-    models.find((m) => m.modelId.toLowerCase() === query) ??
-    models.find((m) => m.ref.toLowerCase().includes(query) || m.name.toLowerCase().includes(query));
+    models.find((m) => m.modelId.toLowerCase() === query);
+
+  // Allow dynamic `<existing-provider>/<any-model-id>` (e.g. openrouter/deepseek/deepseek-r1 or opencode-go/kimi-k3)
+  if (!match && rawTrimmed.includes("/")) {
+    const slashIdx = rawTrimmed.indexOf("/");
+    const providerPrefix = rawTrimmed.slice(0, slashIdx).toLowerCase();
+    const dynamicModelId = rawTrimmed.slice(slashIdx + 1).trim();
+    const matchedProviderKey = Object.keys(providers).find((k) => k.toLowerCase() === providerPrefix);
+    if (matchedProviderKey && dynamicModelId && !/\s/.test(dynamicModelId)) {
+      const provider = providers[matchedProviderKey];
+      const list = Array.isArray(provider.models) ? (provider.models as Array<Record<string, unknown>>) : [];
+      if (!list.some((entry) => entry.id === dynamicModelId)) {
+        list.push({
+          id: dynamicModelId,
+          name: `${dynamicModelId} (${matchedProviderKey})`,
+          api: "openai-completions",
+          reasoning: true,
+          input: ["text", "image"],
+          contextWindow: 131072,
+          maxTokens: 16384,
+          compat: {
+            supportsReasoningEffort: true,
+            supportedReasoningEfforts: ["low", "medium", "high"],
+            supportsDeveloperRole: false,
+            supportsStrictMode: false,
+            supportsTools: true,
+            maxTokensField: "max_completion_tokens",
+          },
+        });
+        provider.models = list;
+      }
+      const envMap: NodeJS.ProcessEnv = { ...process.env };
+      loadDotEnvInto(envMap);
+      const rawKey = typeof provider.apiKey === "string" ? provider.apiKey : "";
+      const envMatch = /^\$\{([A-Z0-9_]+)\}$/.exec(rawKey.trim());
+      const apiKeyEnv = envMatch ? envMatch[1] : "";
+      const resolvedKey = rawKey.replace(/\$\{([A-Z0-9_]+)\}/g, (_m, k: string) => envMap[k] ?? "");
+      match = {
+        ref: `${matchedProviderKey}/${dynamicModelId}`,
+        provider: matchedProviderKey,
+        modelId: dynamicModelId,
+        name: `${dynamicModelId} (${matchedProviderKey})`,
+        apiKeyEnv,
+        hasApiKey: resolvedKey.trim().length > 0,
+        active: true,
+      };
+    }
+  }
+
+  if (!match) {
+    match = models.find((m) => m.ref.toLowerCase().includes(query) || m.name.toLowerCase().includes(query));
+  }
 
   if (!match) {
     const valid = models.map((m) => m.provider + " (" + m.ref + ")").join(", ");
-    return { ok: false, error: `Unknown model '${targetRaw}'. Available: ${valid}` };
+    return { ok: false, error: `Unknown model '${targetRaw}'. Available: ${valid} (or <provider>/<model-id>)` };
   }
-
-  const config = readOpenClawConfigObject();
   const agents = (config.agents ?? {}) as Record<string, unknown>;
   const defaults = (agents.defaults ?? {}) as Record<string, unknown>;
   const modelObj = typeof defaults.model === "object" && defaults.model !== null
@@ -516,6 +574,7 @@ async function main() {
   let activeRunFilmMode = false;
   let activePlayerName: string | undefined;
   let activeRunThinking: string | undefined;
+  let activeSessionId = "minecraftharness-default";
   let outstandingPrompts = 0;
 
   interface StreamedOpRecord {
@@ -574,6 +633,7 @@ async function main() {
     host: RPC_HOST,
     port: PROXY_PORT,
     getTargetReasoningEffort: () => activeRunThinking ?? currentThinking,
+    getActiveSessionId: () => activeSessionId,
     onStreamedBuildOp: handleStreamedBuildOp,
     openclawConfigPath: OPENCLAW_CONFIG_PATH,
     openclawStateDir: OPENCLAW_STATE_DIR,
@@ -599,8 +659,35 @@ async function main() {
       await mcClient.request("notify_status", { playerName, message: chars.slice(start, start + 2048).join("") }).catch(() => {});
     }
   }
-  let batchReplySent: string | null = null;
+  const sentChatReplies = new Set<string>();
   let toolSeq = 0;
+
+  function sanitizeChatReply(text: string): string {
+    return text
+      .replace(/<think>[\s\S]*?<\/think>/gi, "")
+      .replace(/<\/?think>/gi, "")
+      .trim();
+  }
+
+  async function sendReplyOnceToChat(
+    playerName: string | undefined,
+    rawText: string,
+    filmMode: boolean,
+    force = false
+  ): Promise<void> {
+    const clean = sanitizeChatReply(rawText);
+    if (!clean || filmMode || !mcClient.isConnected()) return;
+    if (!force && sentChatReplies.has(clean)) return;
+    sentChatReplies.add(clean);
+    await notifyPlayer(playerName, clean);
+  }
+
+  telemetry.onInferenceDone((trace) => {
+    if (trace.status !== "DONE" || !activePlayerName || activeRunFilmMode) return;
+    const clean = sanitizeChatReply(trace.contentText);
+    if (!clean) return;
+    void sendReplyOnceToChat(activePlayerName, clean, activeRunFilmMode);
+  });
 
   async function runPrompt(opts: {
     playerName: string;
@@ -622,12 +709,13 @@ async function main() {
     console.log(`[Bridge] Prompt from ${playerName} (mode=${AGENT_MODE}, session=${session.id} turn=${session.turns}, thinking=${thinking}): ${trimmedPrompt}`);
     activePlayerName = playerName;
     activeRunThinking = thinking;
+    activeSessionId = session.id;
     resetStreamState();
     mcClient.resetPacing();
     telemetry.beginPromptRun(playerName, trimmedPrompt, thinking, opts.receivedAt);
     batchNeedsFinish = false;
     activeRunFilmMode = filmMode;
-    batchReplySent = null;
+    sentChatReplies.clear();
 
     let ctx = opts.context;
     if (opts.promptAnchor) {
@@ -650,6 +738,7 @@ async function main() {
         sessionId: session.id,
         userMessage,
         thinkingLevel: thinking,
+        onStepReply: (stepReply) => sendReplyOnceToChat(playerName, stepReply, filmMode),
       });
     } else {
       const gatewayOk = await ensureGateway();
@@ -673,8 +762,8 @@ async function main() {
     if (batchNeedsFinish && mcClient.isConnected()) {
       await mcClient.request("finish_build", {}).catch(() => {});
     }
-    if (!filmMode && (res.reply.trim() !== batchReplySent || !res.ok) && res.reply && mcClient.isConnected()) {
-      await notifyPlayer(playerName, res.reply);
+    if (res.reply) {
+      await sendReplyOnceToChat(playerName, res.reply, filmMode, !res.ok);
     }
     return res;
   }
@@ -1053,10 +1142,7 @@ async function main() {
         if (toolName === "mc_build_batch") batchNeedsFinish = body.finish === false;
         if (toolName === "mc_fx" && body.effect === "finish") batchNeedsFinish = false;
         if (toolName === "mc_build_batch" && typeof body.reply === "string" && body.reply.trim()) {
-          batchReplySent = body.reply.trim();
-          if (!activeRunFilmMode && mcClient.isConnected()) {
-            await notifyPlayer(activePlayerName, batchReplySent);
-          }
+          await sendReplyOnceToChat(activePlayerName, body.reply, activeRunFilmMode);
         }
       }
       const summary = summarizeToolResult(toolName, body, result);

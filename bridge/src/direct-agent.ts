@@ -54,7 +54,12 @@ function loadDotEnvMap(stateDir: string): Record<string, string> {
 
 function resolveEnvPlaceholders(value: string, dotEnv: Record<string, string>): string {
   return value.replace(/\$\{([A-Z0-9_]+)\}/g, (_match, key: string) => {
-    return process.env[key] ?? dotEnv[key] ?? "";
+    const direct = process.env[key] ?? dotEnv[key];
+    if (direct) return direct;
+    if (key === "OPENCODE_GO_API_KEY") {
+      return process.env.OPENCODE_API_KEY ?? dotEnv.OPENCODE_API_KEY ?? "";
+    }
+    return "";
   });
 }
 
@@ -230,6 +235,7 @@ export class DirectAgent {
     sessionId: string;
     userMessage: string;
     thinkingLevel: string;
+    onStepReply?: (reply: string) => void | Promise<void>;
   }): Promise<{ ok: boolean; reply: string; elapsedMs: number }> {
     const t0 = Date.now();
     const cfg = resolveActiveProviderConfig(this.openclawConfigPath, this.openclawStateDir);
@@ -366,8 +372,13 @@ export class DirectAgent {
         }
         history.push(assistantMsg);
 
+        const stepReply = streamRes.content.trim();
+        if (stepReply && opts.onStepReply) {
+          await opts.onStepReply(stepReply);
+        }
+
         if (streamRes.toolCalls.length === 0) {
-          return { ok: true, reply: streamRes.content.trim(), elapsedMs: Date.now() - t0 };
+          return { ok: true, reply: stepReply, elapsedMs: Date.now() - t0 };
         }
 
         // Execute all tool calls in parallel in-process (0ms MCP overhead)

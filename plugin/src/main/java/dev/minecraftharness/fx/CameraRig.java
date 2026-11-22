@@ -63,8 +63,26 @@ public final class CameraRig {
     public void setFilmMode(boolean enabled) {
         this.filmMode = enabled;
         for (World w : Bukkit.getWorlds()) {
-            w.setGameRule(org.bukkit.GameRule.SEND_COMMAND_FEEDBACK, !enabled);
-            w.setGameRule(org.bukkit.GameRule.COMMAND_BLOCK_OUTPUT, !enabled);
+            setBooleanGameRule(w, "send_command_feedback", "sendCommandFeedback", !enabled);
+            setBooleanGameRule(w, "command_block_output", "commandBlockOutput", !enabled);
+        }
+    }
+
+    @SuppressWarnings({"unchecked", "deprecation"})
+    private static void setBooleanGameRule(World world, String snakeName, String legacyName, boolean value) {
+        try {
+            org.bukkit.GameRule<?> rule = org.bukkit.GameRule.getByName(snakeName);
+            if (rule == null) {
+                rule = org.bukkit.GameRule.getByName(legacyName);
+            }
+            if (rule != null && rule.getType() == Boolean.class) {
+                world.setGameRule((org.bukkit.GameRule<Boolean>) rule, value);
+                return;
+            }
+            // Fallback for registries/older Bukkit APIs
+            world.setGameRuleValue(legacyName, String.valueOf(value));
+        } catch (Throwable ignored) {
+            // Safely ignore on future API versions if game rule naming changes
         }
     }
 

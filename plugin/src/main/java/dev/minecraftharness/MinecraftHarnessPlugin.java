@@ -727,7 +727,7 @@ public final class MinecraftHarnessPlugin extends JavaPlugin implements Listener
                     sender.sendMessage(Component.text("Active: ", NamedTextColor.GRAY)
                         .append(Component.text(activeModelRef, NamedTextColor.GREEN, TextDecoration.BOLD)));
                     if (availableModels.isEmpty()) {
-                        sender.sendMessage(Component.text("Use /mh model <cerebras|opendesign|commandcode>", NamedTextColor.GRAY));
+                        sender.sendMessage(Component.text("Use /mh model <cerebras|opendesign|opencode-go|openrouter|commandcode>", NamedTextColor.GRAY));
                         JsonObject ev = new JsonObject();
                         ev.addProperty("command", "model");
                         ev.addProperty("value", "");
@@ -747,6 +747,7 @@ public final class MinecraftHarnessPlugin extends JavaPlugin implements Listener
                         }
                         sender.sendMessage(line);
                     }
+                    sender.sendMessage(Component.text("任意モデル指定例: /mh model openrouter/<model-id> または /mh model opencode-go/<model-id>", NamedTextColor.DARK_GRAY));
                     return true;
                 }
                 String target = String.join(" ", java.util.Arrays.copyOfRange(args, 1, args.length)).trim();
@@ -854,7 +855,7 @@ public final class MinecraftHarnessPlugin extends JavaPlugin implements Listener
                         if (seen.add(m.ref())) suggestions.add(m.ref());
                     }
                     if (suggestions.isEmpty()) {
-                        suggestions.addAll(List.of("cerebras", "opendesign", "commandcode"));
+                        suggestions.addAll(List.of("cerebras", "opendesign", "opencode-go", "openrouter", "commandcode"));
                     }
                     String prefix = args[1].toLowerCase(Locale.ROOT);
                     yield suggestions.stream().filter(s -> s.toLowerCase(Locale.ROOT).startsWith(prefix)).toList();

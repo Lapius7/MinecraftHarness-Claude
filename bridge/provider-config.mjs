@@ -57,7 +57,26 @@ function main([id, model, base, keyEnv]) {
   }
   const provider = providers[id];
   const chosen = model || provider.models[0]?.id;
-  if (!chosen || !provider.models.some(entry => entry.id === chosen)) throw Error("Model is not registered for " + id);
+  if (!chosen) throw Error("No model configured for " + id);
+  if (!provider.models.some(entry => entry.id === chosen)) {
+    provider.models.push({
+      id: chosen,
+      name: `${chosen} (${id})`,
+      api: "openai-completions",
+      reasoning: true,
+      input: ["text", "image"],
+      contextWindow: 131072,
+      maxTokens: 16384,
+      compat: {
+        supportsReasoningEffort: true,
+        supportedReasoningEfforts: ["low", "medium", "high"],
+        supportsDeveloperRole: false,
+        supportsStrictMode: false,
+        supportsTools: true,
+        maxTokensField: "max_completion_tokens",
+      },
+    });
+  }
   selected.primary = id + "/" + chosen;
   save(configPath, config);
   console.log("Active: " + selected.primary);
