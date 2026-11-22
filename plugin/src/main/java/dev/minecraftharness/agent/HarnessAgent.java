@@ -319,6 +319,14 @@ public final class HarnessAgent {
         return m.ref() + " / " + auth;
     }
 
+    /** Short description of the player's current conversation for the help screen. */
+    public String sessionSummary(String playerName) {
+        PlayerState st = state(playerName);
+        Session cur = st.sessions.get(st.activeName);
+        boolean active = cur != null && (cur.cliStarted || cur.history.size() > 0);
+        return st.activeName + (active ? "（会話あり）" : "（まだ空）");
+    }
+
     public ToolHost host() {
         return host;
     }
