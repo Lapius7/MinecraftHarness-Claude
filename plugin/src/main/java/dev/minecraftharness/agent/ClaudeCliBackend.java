@@ -297,6 +297,9 @@ public final class ClaudeCliBackend {
                 switch (type) {
                     case "system" -> {
                         if ("init".equals(str(j, "subtype"))) {
+                            in.turn().stats.setModel(str(j, "model"), level,
+                                "none".equals(str(j, "apiKeySource")) ? "サブスクリプション (claude CLI)"
+                                    : str(j, "apiKeySource").isEmpty() ? "claude CLI" : "claude CLI (APIキー)");
                             initProblem = checkInit(j);
                             if (initProblem != null) killTree(proc);
                         }
@@ -348,6 +351,7 @@ public final class ClaudeCliBackend {
                         if ("authentication_failed".equals(str(j, "error"))) authFailed = true;
                         String text = assistantText(j);
                         if (!text.isBlank() && !authFailed) {
+                            in.turn().recordRaw(text);
                             host.sendReplyOnce(player, text, in.filmMode(), in.turn().sentReplies);
                         }
                         answer.setLength(0);
@@ -355,6 +359,7 @@ public final class ClaudeCliBackend {
                     case "result" -> {
                         isError = j.has("is_error") && j.get("is_error").isJsonPrimitive() && j.get("is_error").getAsBoolean();
                         resultText = str(j, "result");
+                        readUsage(j, in.turn().stats);
                         if (isError) errorText = resultText;
                         if (str(j, "subtype").startsWith("error")) {
                             isError = true;
@@ -403,5 +408,26 @@ public final class ClaudeCliBackend {
             return new Outcome(false, false, false, flag, resultText, err.isEmpty() ? "exit " + exit : err);
         }
         return new Outcome(true, false, false, false, resultText, "");
+    }
+
+    /** Reads the result event's usage block; fields the CLI did not send stay unknown. */
+    static void readUsage(JsonObject result, dev.minecraftharness.summary.TurnStats stats) {
+        if (!result.has("usage") || !result.get("usage").isJsonObject()) return;
+        JsonObject u = result.getAsJsonObject("usage");
+        long thinking = -1;
+        if (u.has("output_tokens_details") && u.get("output_tokens_details").isJsonObject()) {
+            thinking = num(u.getAsJsonObject("output_tokens_details"), "thinking_tokens", -1);
+        }
+        stats.addUsage(num(u, "input_tokens", 0), num(u, "output_tokens", 0),
+            num(u, "cache_read_input_tokens", 0), num(u, "cache_creation_input_tokens", 0), thinking);
+    }
+
+    private static long num(JsonObject o, String key, long fallback) {
+        if (o == null || !o.has(key) || !o.get(key).isJsonPrimitive()) return fallback;
+        try {
+            return o.get(key).getAsLong();
+        } catch (NumberFormatException e) {
+            return fallback;
+        }
     }
 }

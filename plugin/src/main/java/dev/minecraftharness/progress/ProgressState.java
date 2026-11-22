@@ -39,12 +39,22 @@ public final class ProgressState {
     private String toolName = "";
     private String reason = "";
     private int queued;
+    private long phaseSince;
+    private final long[] bucket = new long[5];
+    private boolean inReview;
+    private int reviewRound;
+    private int reviewMax;
+    private String reviewStage = "";
+
+    /** Time spent per kind of work for the running prompt. */
+    public record Timings(long waitMs, long thinkMs, long toolMs, long buildMs, long reviewMs) {}
 
     public ProgressState(String playerName, LongSupplier clock) {
         this.playerName = playerName;
         this.clock = clock;
         this.startedAt = clock.getAsLong();
         this.lastEventAt = startedAt;
+        this.phaseSince = startedAt;
     }
 
     public String playerName() {
@@ -61,14 +71,14 @@ public final class ProgressState {
     /** The model started reasoning (CLI thinking_delta / API thinking_delta, or the turn began). */
     public synchronized void thinking() {
         if (!touch()) return;
-        if (!inTool) phase = Phase.THINKING;
+        if (!inTool) setPhase(Phase.THINKING);
     }
 
     /** The model is writing its answer; {@code tokens} is a rough running total for this turn. */
     public synchronized void responding(int tokens) {
         if (!touch()) return;
         this.tokens = Math.max(this.tokens, tokens);
-        if (!inTool) phase = Phase.RESPONDING;
+        if (!inTool) setPhase(Phase.RESPONDING);
     }
 
     /** The model started writing a tool call. Not counted yet: counting happens when it runs. */
@@ -76,7 +86,7 @@ public final class ProgressState {
         if (!touch()) return;
         if (inTool) return;
         toolName = clean(name);
-        phase = Phase.TOOL;
+        setPhase(Phase.TOOL);
     }
 
     /** A tool call is actually running (ToolHost.dispatch). */
@@ -85,14 +95,14 @@ public final class ProgressState {
         toolCalls++;
         inTool = true;
         toolName = clean(name);
-        phase = BUILD_TOOLS.contains(toolName) ? Phase.BUILDING : Phase.TOOL;
+        setPhase(BUILD_TOOLS.contains(toolName) ? Phase.BUILDING : Phase.TOOL);
     }
 
     /** The running tool call returned; the model gets the result next. */
     public synchronized void toolEnd() {
         if (!touch()) return;
         inTool = false;
-        phase = Phase.THINKING;
+        setPhase(Phase.THINKING);
     }
 
     /** Another prompt from the same player was accepted while this one is still running. */
@@ -124,6 +134,12 @@ public final class ProgressState {
         queued--;
         startedAt = clock.getAsLong();
         lastEventAt = startedAt;
+        phaseSince = startedAt;
+        java.util.Arrays.fill(bucket, 0L);
+        inReview = false;
+        reviewRound = 0;
+        reviewMax = 0;
+        reviewStage = "";
         phase = Phase.WAITING;
         tokens = 0;
         toolCalls = 0;
@@ -149,6 +165,55 @@ public final class ProgressState {
         else end(Phase.CANCELLED, why);
     }
 
+    private int bucketOf(Phase p) {
+        if (inReview) return 4;
+        return switch (p) {
+            case WAITING -> 0;
+            case THINKING, RESPONDING -> 1;
+            case TOOL -> 2;
+            case BUILDING -> 3;
+            default -> -1;
+        };
+    }
+
+    private void flush() {
+        long now = clock.getAsLong();
+        int b = bucketOf(phase);
+        if (b >= 0) bucket[b] += Math.max(0, now - phaseSince);
+        phaseSince = now;
+    }
+
+    private void setPhase(Phase next) {
+        flush();
+        phase = next;
+    }
+
+    /** Review round {@code round} of {@code max} is running; {@code stage} is e.g. 点検中 or 修正中. */
+    public synchronized void review(int round, int max, String stage) {
+        if (isFinishedLocked()) return;
+        flush();
+        inReview = true;
+        reviewRound = round;
+        reviewMax = max;
+        reviewStage = clean(stage);
+        lastEventAt = clock.getAsLong();
+    }
+
+    public synchronized void reviewEnd() {
+        if (isFinishedLocked()) return;
+        flush();
+        inReview = false;
+        reviewStage = "";
+    }
+
+    public synchronized Timings timings() {
+        long now = clock.getAsLong();
+        long[] b = bucket.clone();
+        int cur = bucketOf(phase);
+        if (!isFinishedLocked() && cur >= 0) b[cur] += Math.max(0, now - phaseSince);
+        return new Timings(b[0], b[1], b[2], b[3], b[4]);
+    }
+
     private boolean touch() {
         if (isFinishedLocked()) return false;
         lastEventAt = clock.getAsLong();
@@ -157,6 +222,7 @@ public final class ProgressState {
 
     private void end(Phase target, String why) {
         if (isFinishedLocked()) return;
+        flush();
         phase = target;
         reason = clean(why);
         finishedAt = clock.getAsLong();
@@ -206,16 +272,17 @@ public final class ProgressState {
             return new View(phase, Tone.WARN, "応答待ち(" + (quiet / 1000) + "秒) 経過" + elapsed + "秒", pulse, true);
         }
         String wait = queued > 0 ? " +待ち" + queued : "";
+        String rv = inReview ? "レビュー " + reviewRound + "/" + (reviewMax > 0 ? String.valueOf(reviewMax) : "-") + ": " + reviewStage + " " : "";
         String nth = toolCalls > 0 ? toolCalls + "件目" : "";
         return switch (phase) {
             case WAITING -> new View(phase, Tone.QUEUED, "受付: 待機中(" + elapsed + "秒)" + wait, pulse, false);
-            case THINKING -> new View(phase, Tone.THINK, "思考中(" + elapsed + "秒)" + wait, pulse, false);
+            case THINKING -> new View(phase, Tone.THINK, rv + "思考中(" + elapsed + "秒)" + wait, pulse, false);
             case RESPONDING -> new View(phase, Tone.WRITE,
-                "応答中" + (tokens > 0 ? " 約" + tokens + "トークン" : "") + "(" + elapsed + "秒)" + wait, pulse, false);
+                rv + "応答中" + (tokens > 0 ? " 約" + tokens + "トークン" : "") + "(" + elapsed + "秒)" + wait, pulse, false);
             case TOOL -> new View(phase, Tone.TOOL,
-                "ツール実行中: " + toolName + (nth.isEmpty() ? "" : " " + nth) + "(" + elapsed + "秒)" + wait, pulse, false);
+                rv + "ツール実行中: " + toolName + (nth.isEmpty() ? "" : " " + nth) + "(" + elapsed + "秒)" + wait, pulse, false);
             default -> new View(phase, Tone.TOOL,
-                "建築中: " + toolName + (nth.isEmpty() ? "" : " " + nth) + "(" + elapsed + "秒)" + wait, pulse, false);
+                rv + "建築中: " + toolName + (nth.isEmpty() ? "" : " " + nth) + "(" + elapsed + "秒)" + wait, pulse, false);
         };
     }
 

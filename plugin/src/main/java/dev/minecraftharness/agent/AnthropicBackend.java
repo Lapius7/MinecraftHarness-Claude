@@ -190,7 +190,10 @@ public final class AnthropicBackend {
                 AnthropicStream s = res.stream;
                 history.addAssistant(s.content());
                 String text = s.text();
-                if (!text.isBlank()) host.sendReplyOnce(player, text, in.filmMode(), turn.sentReplies);
+                if (!text.isBlank()) {
+                    turn.recordRaw(text);
+                    host.sendReplyOnce(player, text, in.filmMode(), turn.sentReplies);
+                }
 
                 List<AnthropicStream.ToolUse> uses = s.toolUses();
                 if (uses.isEmpty() || !"tool_use".equals(s.stopReason())) {
@@ -386,6 +389,8 @@ public final class AnthropicBackend {
 
         long done = System.currentTimeMillis();
         AnthropicStream.Usage u = stream.usage();
+        in.turn().stats.addUsage(u.inputTokens(), u.outputTokens(), u.cacheReadTokens(), u.cacheCreationTokens(), -1);
+        in.turn().stats.setModel(cfg.modelId(), effort, "Anthropic API (APIキー)");
         Double tps = null;
         if (u.outputTokens() > 0 && firstTokenAt[0] >= 0) {
             double sec = Math.max(0.05, (done - firstTokenAt[0]) / 1000.0);

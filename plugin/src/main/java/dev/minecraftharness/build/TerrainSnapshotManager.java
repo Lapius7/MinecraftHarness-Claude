@@ -62,6 +62,7 @@ public final class TerrainSnapshotManager {
 
     private final Deque<SessionSnapshot> sessions = new ArrayDeque<>();
     private SessionSnapshot activeSession;
+    private long created;
 
     public synchronized SessionSnapshot beginOrGetSession(String label) {
         if (activeSession == null) {
@@ -70,11 +71,17 @@ public final class TerrainSnapshotManager {
                 label != null ? label : "AI Build"
             );
             sessions.push(activeSession);
+            created++;
             while (sessions.size() > 16) {
                 sessions.removeLast();
             }
         }
         return activeSession;
+    }
+
+    /** Number of build sessions ever opened; used to find out how many a review round added. */
+    public synchronized long createdCount() {
+        return created;
     }
 
     public synchronized SessionSnapshot closeActiveSession() {
@@ -126,6 +133,20 @@ public final class TerrainSnapshotManager {
             }
         }
         return restoreSession(session);
+    }
+
+    /** Undoes the {@code n} newest sessions. @return how many blocks and entities were restored. */
+    public RestoreSummary undoMany(int n) {
+        int blocks = 0;
+        int entities = 0;
+        Location center = null;
+        for (int i = 0; i < n; i++) {
+            RestoreSummary r = undoLast();
+            blocks += r.restoredBlocks();
+            entities += r.removedEntities();
+            if (center == null) center = r.center();
+        }
+        return new RestoreSummary(blocks, entities, center);
     }
 
     public RestoreSummary resetAll() {

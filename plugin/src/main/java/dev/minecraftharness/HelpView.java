@@ -66,6 +66,10 @@ public final class HelpView {
 
         new Entry("演出", "/mh film", "/mh film ", "録画向けの表示",
             "チャットや HUD を抑えます。on / off。", "/mh film on", PERM_USE),
+        new Entry("建築", "/mh review", "/mh review ", "建築後の自己点検",
+            "off / light / normal / strict / max。依頼末尾の --review でも指定できます。", "/mh review strict", PERM_USE),
+        new Entry("建築", "/mh detail", "/mh detail ", "結果の詳細表示",
+            "off / short / full。short は 1 行で、重ねると full が見えます。", "/mh detail full", PERM_USE),
         new Entry("演出", "/mh progress", "/mh progress ", "進捗の表示先",
             "bossbar / actionbar / off。送信後の状態と経過秒を出します。", "/mh progress actionbar", PERM_USE),
         new Entry("演出", "/mh hud", "/mh hud ", "詳細 HUD",

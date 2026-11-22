@@ -6,7 +6,7 @@ description: Build in Minecraft by chatting with Claude. Runs on your Claude sub
 commands:
   mh:
     description: Claude-powered builder, model switch, undo/reset, film mode, camera rig
-    usage: /mh [help|<prompt>|model|effort|key|undo|reset|shift|film|hud|progress|cam|fx|speed|status|stop|claude]
+    usage: /mh [help|<prompt>|model|effort|key|undo|reset|shift|film|hud|progress|review|detail|cam|fx|speed|status|stop|claude]
     permission: minecraftharness.use
 permissions:
   minecraftharness.use:
