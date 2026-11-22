@@ -485,8 +485,11 @@ export class TelemetryHub {
     if (trace.completionTokens && trace.elapsedMs > 0) {
       trace.e2eTps = Math.round((trace.completionTokens / (trace.elapsedMs / 1000)) * 10) / 10;
     }
-    if (trace.serverTps === null && trace.completionTokens && trace.firstTokenAt !== null) {
-      const streamSec = Math.max(0.05, (now - trace.firstTokenAt) / 1000);
+    // Skip when reasoning tokens were billed but never streamed: the window after the first visible token would not cover them.
+    const unstreamedReasoning = (trace.reasoningTokens ?? 0) > 0 && trace.firstReasoningAt === null;
+    if (trace.serverTps === null && trace.completionTokens && trace.firstTokenAt !== null && !unstreamedReasoning && now - trace.firstTokenAt >= 300) {
+      // Under ~300ms the text arrived as one burst, so tokens / window would be meaningless.
+      const streamSec = (now - trace.firstTokenAt) / 1000;
       trace.serverTps = Math.round((trace.completionTokens / streamSec) * 10) / 10;
     }
     if (trace.reasoningTokens && trace.reasoningTokens > 0 && trace.firstReasoningAt !== null && trace.lastReasoningAt !== null) {

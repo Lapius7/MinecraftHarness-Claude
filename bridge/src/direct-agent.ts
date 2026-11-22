@@ -166,7 +166,7 @@ export class DirectAgent {
     this.maxSteps = opts.maxSteps ?? Math.max(2, Number(process.env.MH_DIRECT_MAX_STEPS ?? 12));
   }
 
-  private getSystemPrompt(): string {
+  getSystemPrompt(): string {
     const agentsPath = path.join(this.workspaceDir, "AGENTS.md");
     const skillPath = path.join(this.workspaceDir, "skills", "minecraft-harness", "SKILL.md");
     const m1 = fs.existsSync(agentsPath) ? fs.statSync(agentsPath).mtimeMs : 0;

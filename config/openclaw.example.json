@@ -52,6 +52,17 @@
           }
         ]
       },
+      "claude-cli": {
+        "baseUrl": "claude-cli://local",
+        "apiKey": "",
+        "api": "claude-cli",
+        "timeoutSeconds": 1800,
+        "models": [
+          { "id": "sonnet", "name": "Claude Sonnet (claude CLI)", "api": "claude-cli", "reasoning": true, "input": ["text", "image"] },
+          { "id": "opus", "name": "Claude Opus (claude CLI)", "api": "claude-cli", "reasoning": true, "input": ["text", "image"] },
+          { "id": "haiku", "name": "Claude Haiku (claude CLI)", "api": "claude-cli", "reasoning": true, "input": ["text", "image"] }
+        ]
+      },
       "commandcode": {
         "baseUrl": "http://127.0.0.1:25582/commandcode/v1",
         "apiKey": "${CMD_API_KEY}",

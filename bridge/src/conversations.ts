@@ -34,11 +34,17 @@ export class Conversations {
     return this.players[key];
   }
 
+  static isReset(prompt: string): boolean {
+    const parts = prompt.trim().split(/\s+/);
+    const verb = parts[0].toLowerCase();
+    return ["new", "reset-chat", "reset_chat"].includes(verb) && parts.length === 1
+      || verb === "history" && parts.length === 2 && parts[1].toLowerCase() === "reset";
+  }
+
   command(name: string, prompt: string): string | undefined {
     const parts = prompt.trim().split(/\s+/);
     const verb = parts[0].toLowerCase();
-    const reset = ["new", "reset-chat", "reset_chat"].includes(verb) && parts.length === 1
-      || verb === "history" && parts.length === 2 && parts[1].toLowerCase() === "reset";
+    const reset = Conversations.isReset(prompt);
     if (!reset && verb !== "session") return;
     const player = this.player(name);
     if (reset) {

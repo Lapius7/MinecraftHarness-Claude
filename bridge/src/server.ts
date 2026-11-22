@@ -13,6 +13,7 @@ import { captureMinecraftScreenshot, closeScreenshotWorker } from "./screenshot.
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import { createMinecraftMcpServer } from "./mcp-tools.js";
 import { DirectAgent } from "./direct-agent.js";
+import { ClaudeCliAgent, CLAUDE_CLI_PROVIDER_ID, claudeCliProviderEntry, isClaudeCliRef } from "./claude-cli-agent.js";
 import { opFingerprint } from "./stream-ops.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -207,7 +208,14 @@ function readOpenClawConfigObject(): Record<string, unknown> {
       fs.writeFileSync(targetPath, raw, "utf8");
     }
   }
-  return JSON.parse(fs.readFileSync(targetPath, "utf8").replace(/^\uFEFF/, "")) as Record<string, unknown>;
+  const config = JSON.parse(fs.readFileSync(targetPath, "utf8").replace(/^\uFEFF/, "")) as Record<string, unknown>;
+  // The claude CLI provider is built in: make it selectable even when an older config lacks it.
+  const models = (config.models ?? {}) as Record<string, unknown>;
+  const providers = (models.providers ?? {}) as Record<string, unknown>;
+  if (!providers[CLAUDE_CLI_PROVIDER_ID]) providers[CLAUDE_CLI_PROVIDER_ID] = claudeCliProviderEntry();
+  models.providers = providers;
+  config.models = models;
+  return config;
 }
 
 function saveOpenClawConfigObject(config: Record<string, unknown>): void {
@@ -242,7 +250,7 @@ function listConfiguredModels(): { active: string; models: ConfiguredModelInfo[]
     const envMatch = /^\$\{([A-Z0-9_]+)\}$/.exec(rawKey.trim());
     const apiKeyEnv = envMatch ? envMatch[1] : "";
     const resolvedKey = rawKey.replace(/\$\{([A-Z0-9_]+)\}/g, (_m, k: string) => envMap[k] ?? "");
-    const hasApiKey = resolvedKey.trim().length > 0;
+    const hasApiKey = providerId === CLAUDE_CLI_PROVIDER_ID || resolvedKey.trim().length > 0;
     const list = Array.isArray(provider.models) ? (provider.models as Array<Record<string, unknown>>) : [];
     for (const entry of list) {
       const id = typeof entry.id === "string" ? entry.id : "";
@@ -297,7 +305,9 @@ function selectConfiguredModel(targetRaw: string): {
       const provider = providers[matchedProviderKey];
       const list = Array.isArray(provider.models) ? (provider.models as Array<Record<string, unknown>>) : [];
       if (!list.some((entry) => entry.id === dynamicModelId)) {
-        list.push({
+        list.push(matchedProviderKey === CLAUDE_CLI_PROVIDER_ID
+          ? { id: dynamicModelId, name: `${dynamicModelId} (claude CLI)`, api: "claude-cli", reasoning: true, input: ["text", "image"] }
+          : {
           id: dynamicModelId,
           name: `${dynamicModelId} (${matchedProviderKey})`,
           api: "openai-completions",
@@ -328,7 +338,7 @@ function selectConfiguredModel(targetRaw: string): {
         modelId: dynamicModelId,
         name: `${dynamicModelId} (${matchedProviderKey})`,
         apiKeyEnv,
-        hasApiKey: resolvedKey.trim().length > 0,
+        hasApiKey: matchedProviderKey === CLAUDE_CLI_PROVIDER_ID || resolvedKey.trim().length > 0,
         active: true,
       };
     }
@@ -670,6 +680,29 @@ async function main() {
     dispatch: (name, args) => executeLocalTool(name, args),
   });
 
+  // Drives the user's installed official `claude` CLI (no OAuth token handling on our side).
+  const claudeAgent = new ClaudeCliAgent({
+    telemetry,
+    mcpUrl: `http://${RPC_HOST}:${RPC_PORT}/mcp`,
+    cwd: path.join(OPENCLAW_STATE_DIR, "claude-cli"),
+    getSystemPrompt: () => directAgent.getSystemPrompt(),
+  });
+
+  function activeClaudeCliModel(): string | undefined {
+    try {
+      const active = listConfiguredModels().active;
+      if (!isClaudeCliRef(active)) return undefined;
+      return active.includes("/") ? active.slice(active.indexOf("/") + 1) : "sonnet";
+    } catch {
+      return undefined;
+    }
+  }
+
+  function clearClaudeSession(): string {
+    const { hadSession } = claudeAgent.clear();
+    return hadSession ? "claude のセッションを破棄しました。次の依頼から新しい会話で始めます。" : "claude のセッションはまだ開始されていません（次の依頼から新規で始まります）。";
+  }
+
   telemetry.onHudUpdate((hud) => {
     if (mcClient.isConnected()) {
       mcClient.request("telemetry", { ...hud, playerName: activePlayerName }, 3000).catch(() => {});
@@ -742,8 +775,14 @@ async function main() {
   }) {
     const { playerName, prompt, filmMode, thinking } = opts;
     const trimmedPrompt = prompt.trim();
+    if (/^claude\s+(clear|new|reset)$/i.test(trimmedPrompt)) {
+      const msg = clearClaudeSession();
+      await notifyPlayer(playerName, msg);
+      return { ok: true, reply: msg, elapsedMs: 0 };
+    }
     const response = conversations.command(playerName, trimmedPrompt);
     if (response !== undefined) {
+      if (Conversations.isReset(trimmedPrompt)) claudeAgent.clear();
       await notifyPlayer(playerName, response);
       return { ok: true, reply: response, elapsedMs: 0 };
     }
@@ -774,7 +813,18 @@ async function main() {
     ].join("\n");
 
     let res: { ok: boolean; reply: string; elapsedMs: number };
-    if (AGENT_MODE === "direct") {
+    const claudeModel = activeClaudeCliModel();
+    if (claudeModel !== undefined && AGENT_MODE !== "direct") {
+      res = { ok: false, reply: "claude-cli プロバイダは Direct モード専用です。`.\\restart-all.ps1 -Direct` で起動するか、別のモデルに切り替えてください。", elapsedMs: 0 };
+    } else if (claudeModel !== undefined) {
+      telemetry.markAgentDispatch();
+      res = await claudeAgent.runTurn({
+        modelId: claudeModel,
+        thinkingLevel: thinking,
+        userMessage,
+        onStepReply: (stepReply) => sendReplyOnceToChat(playerName, stepReply, filmMode),
+      });
+    } else if (AGENT_MODE === "direct") {
       telemetry.markAgentDispatch();
       res = await directAgent.runTurn({
         sessionId: session.id,
@@ -975,6 +1025,13 @@ async function main() {
       return;
     }
 
+    if (req.method === "POST" && url === "/claude/clear") {
+      const message = clearClaudeSession();
+      res.writeHead(200, { "content-type": "application/json" });
+      res.end(JSON.stringify({ ok: true, message }));
+      return;
+    }
+
     if (req.method === "GET" && url === "/health") {
       let activeModel = "";
       try {
@@ -986,6 +1043,7 @@ async function main() {
         wsConnected: mcClient.isConnected(),
         agentMode: AGENT_MODE,
         activeModel,
+        claude: claudeAgent.status(),
         gatewayReady,
         gatewayWarm,
         thinking: currentThinking,
@@ -1238,6 +1296,7 @@ async function main() {
 
   const shutdown = () => {
     closeScreenshotWorker();
+    claudeAgent.close();
     telemetry.close();
     proxyServer.close();
     mcClient.close();

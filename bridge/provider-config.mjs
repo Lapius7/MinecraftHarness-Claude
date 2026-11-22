@@ -41,6 +41,11 @@ function main([id, model, base, keyEnv]) {
     return;
   }
   if (!/^[a-z][a-z0-9-]*$/.test(id) || id in Object.prototype) throw Error("Invalid provider id");
+  if (id === "claude-cli" && !providers[id]) {
+    // Built-in provider: drives the installed official `claude` CLI, so no API base or key is needed.
+    const entry = (name) => ({ id: name, name: "Claude " + name + " (claude CLI)", api: "claude-cli", reasoning: true, input: ["text", "image"] });
+    providers[id] = { baseUrl: "claude-cli://local", apiKey: "", api: "claude-cli", timeoutSeconds: 1800, models: ["sonnet", "opus", "haiku"].map(entry) };
+  }
   const existing = providers[id];
   if (base || keyEnv || !existing) {
     if (existing) throw Error("Provider already registered. Select by name, or register a different id.");
@@ -59,7 +64,7 @@ function main([id, model, base, keyEnv]) {
   const chosen = model || provider.models[0]?.id;
   if (!chosen) throw Error("No model configured for " + id);
   if (!provider.models.some(entry => entry.id === chosen)) {
-    provider.models.push({
+    provider.models.push(id === "claude-cli" ? { id: chosen, name: chosen + " (claude CLI)", api: "claude-cli", reasoning: true, input: ["text", "image"] } : {
       id: chosen,
       name: `${chosen} (${id})`,
       api: "openai-completions",

@@ -118,6 +118,18 @@ To register any HTTPS OpenAI Chat Completions-compatible provider (OpenAI, OpenR
 ```
 Put `MY_PROVIDER_API_KEY=...` in `.env` and select it with `.\set-provider.ps1 myprovider`.
 
+### Using your Claude subscription via the `claude` CLI (Direct Mode only)
+
+The `claude-cli` provider launches the official `claude` CLI you have installed and talks to it as a child process. The Bridge never reads or sends your login token, and `ANTHROPIC_API_KEY` / `ANTHROPIC_AUTH_TOKEN` are removed from the child's environment, so the CLI uses its own subscription login.
+
+1. Install the official `claude` CLI, run `claude` once in a terminal and sign in with `/login`.
+2. Start the Bridge in Direct Mode (`.\restart-all.ps1 -Direct`); in other modes the chat shows a notice. Select the provider:
+   - `/mh model claude-cli` (defaults to `sonnet`), `/mh model claude-cli/opus`, `/mh model claude-cli/haiku`, or `.\set-provider.ps1 claude-cli -Model opus`
+3. One `claude` process stays resident and keeps a single conversation across turns. If it exits, the next turn restarts it with `--resume` so the conversation continues. Built-in CLI tools are disabled (`--tools ""`); only the Bridge's `mc_*` MCP tools are allowed.
+4. Start a fresh conversation with `!new`, `/mh claude clear`, or the **Claude新規** button on the dashboard. This discards the `claude` session.
+
+If `claude` is missing or not logged in, the error is shown in game chat with instructions to run `claude` and `/login`. Set `MH_CLAUDE_BIN` to use a non-default executable path. The reasoning/output token split is shown only when the CLI reports it. Standalone single-JAR mode does not support this provider yet.
+
 ---
 
 ## Basic Usage (In-Game)
@@ -210,6 +222,7 @@ Put `MY_PROVIDER_API_KEY=...` in `.env` and select it with `.\set-provider.ps1 m
   - `/mh undo` — 直前の建築・エンティティをきれいに元に戻す
   - `/mh shift -3` — 直前の建築を丸ごと下へ 3 ブロック移動（`/mh shift <右> <上> <前>`）
   - `!new` — 会話履歴をリセットして新しい話題に切り替える
+  - `/mh claude clear` — `claude-cli` プロバイダ使用時に、claude のセッションを破棄して新規に始める（`!new` でも同様）
   - `/mh reasoning <off|low|medium|high>` — AI の思考量（`reasoning_effort`）を変更
   - `/mh film on` / `/mh cam orbit` — 録画向けの HUD 非表示・自動周回カメラ
   - `/mh status` / `/mh stop` — 現在の動作モード（`OpenClaw` / `Direct AI` / `Standalone`）確認やビルド中断

@@ -192,6 +192,7 @@ export function renderDashboardHtml(): string {
         </select>
       </label>
       <button id="clearBtn">Clear</button>
+      <button id="claudeClearBtn" title="claude CLI のセッションを破棄して新規に始める">Claude新規</button>
     </div>
   </header>
 
@@ -509,6 +510,18 @@ export function renderDashboardHtml(): string {
     };
 
     document.getElementById("clearBtn").onclick = () => fetch("/telemetry/clear", { method: "POST" });
+    document.getElementById("claudeClearBtn").onclick = async (e) => {
+      const btn = e.currentTarget;
+      btn.disabled = true;
+      try {
+        const data = await (await fetch("/claude/clear", { method: "POST" })).json();
+        alert(data.message || "claude のセッションを破棄しました");
+      } catch (err) {
+        alert(err.message);
+      } finally {
+        btn.disabled = false;
+      }
+    };
     document.getElementById("thinkingSel").onchange = async (e) => {
       const select = e.target;
       select.disabled = true;
