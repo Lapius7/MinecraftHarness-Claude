@@ -47,8 +47,30 @@ public final class ToolHost {
         public volatile boolean sawObservation;
         public volatile boolean allToolsOk = true;
         public volatile String fastReply;
+        /** Numbers for the result summary; one object per prompt, shared with its review rounds. */
+        public final dev.minecraftharness.summary.TurnStats stats;
+        /** Everything the model said this turn, before report lines were hidden; the review loop reads it. */
+        public final StringBuilder rawReplies = new StringBuilder();
+
+        public void recordRaw(String text) {
+            if (text == null || text.isBlank()) return;
+            synchronized (rawReplies) {
+                rawReplies.append(text).append('\n');
+            }
+        }
+
+        public String raw() {
+            synchronized (rawReplies) {
+                return rawReplies.toString();
+            }
+        }
 
         public Turn(String playerName, boolean filmMode, String thinkingLevel) {
+            this(playerName, filmMode, thinkingLevel, new dev.minecraftharness.summary.TurnStats());
+        }
+
+        public Turn(String playerName, boolean filmMode, String thinkingLevel, dev.minecraftharness.summary.TurnStats stats) {
+            this.stats = stats;
             this.playerName = playerName;
             this.filmMode = filmMode;
             this.thinkingLevel = thinkingLevel;
@@ -56,6 +78,8 @@ public final class ToolHost {
     }
 
     public static final Gson GSON = new GsonBuilder().disableHtmlEscaping().create();
+    private static final Set<String> BUILD_TOOL_NAMES = Set.of(
+        "mc_build_batch", "mc_function_pack", "mc_place_command_chain", "mc_exec_commands");
     public static final Set<String> OBSERVATION_TOOLS = Set.of("mc_inspect_world", "mc_take_photo", "mc_get_context");
 
     private static final Pattern THINK_BLOCK = Pattern.compile("(?is)<think>.*?</think>");
@@ -127,6 +151,15 @@ public final class ToolHost {
     }
 
     // ---- chat / HUD -----------------------------------------------------------------------
+
+    /** Set by the plugin: shows a ready-made component to a player (or holds it until they rejoin). */
+    public volatile java.util.function.BiConsumer<String, net.kyori.adventure.text.Component> componentSink;
+
+    public void sendComponent(String playerName, net.kyori.adventure.text.Component c) {
+        java.util.function.BiConsumer<String, net.kyori.adventure.text.Component> sink = componentSink;
+        if (sink == null || c == null) return;
+        Bukkit.getScheduler().runTask(plugin, () -> sink.accept(playerName, c));
+    }
 
     public void notifyChat(String playerName, String message, boolean filmMode) {
         if (filmMode || message == null || message.isBlank()) return;
@@ -298,6 +331,7 @@ public final class ToolHost {
 
         if ("mc_build_batch".equals(toolName) && isOk(result)
             && args.has("reply") && args.get("reply").isJsonPrimitive() && !args.get("reply").getAsString().isBlank()) {
+            turn.recordRaw(args.get("reply").getAsString());
             sendReplyOnce(playerName, args.get("reply").getAsString(), turn.filmMode, turn.sentReplies);
         }
         return result;
@@ -310,6 +344,21 @@ public final class ToolHost {
             turn.sawObservation = true;
         }
         boolean ok = isOk(result);
+        turn.stats.addToolCall();
+        if (ok && BUILD_TOOL_NAMES.contains(toolName)) turn.stats.markBuilt();
+        if (ok && BUILD_TOOL_NAMES.contains(toolName) && result.has("queued") && result.get("queued").isJsonPrimitive()) {
+            try {
+                turn.stats.addBlocks(result.get("queued").getAsLong());
+            } catch (NumberFormatException ignored) {
+                // not a number: leave the count unknown
+            }
+        }
+        for (String key : new String[] {"anchorId", "structureId", "id"}) {
+            if (ok && BUILD_TOOL_NAMES.contains(toolName) && result.has(key) && result.get(key).isJsonPrimitive()
+                && result.get(key).getAsString().matches("s\\d+")) {
+                turn.stats.addAnchor(result.get(key).getAsString());
+            }
+        }
         if (!ok) turn.allToolsOk = false;
         if ("mc_build_batch".equals(toolName)) {
             boolean finishFalse = args.has("finish") && args.get("finish").isJsonPrimitive() && !args.get("finish").getAsBoolean();
@@ -412,7 +461,7 @@ public final class ToolHost {
 
     public static String sanitizeReply(String text) {
         if (text == null) return "";
-        String s = THINK_BLOCK.matcher(text).replaceAll("");
+        String s = dev.minecraftharness.review.ReviewReport.strip(THINK_BLOCK.matcher(text).replaceAll(""));
         s = THINK_TAG.matcher(s).replaceAll("");
         return s.trim();
     }

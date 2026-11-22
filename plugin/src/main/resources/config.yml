@@ -25,6 +25,37 @@ effort: low
 # Film mode (/mh film on) always hides it.
 progress:
   mode: bossbar
+  # Who besides the requester sees a subdued "<name> さんが建築中: ..." bar while a build runs.
+  #   all (default) / owner (requester only) / off. Players in film mode never see it.
+  observers: all
+  # When the requester leaves while a prompt runs.
+  #   continue (default)  keep running; the result is shown on their next join. Waiting prompts stay too.
+  #   stop                cancel the running prompt and drop their waiting ones
+  onQuit: continue
+
+# Self-review after a build: Claude inspects the result with the existing tools, fixes problems and
+# re-checks. Stops when clean, when worse (the round is undone), or at the round / time / token limit.
+# Players change their own level with /mh review <level>; a prompt can add --review <level> once.
+# rounds 0 = unlimited (bounded by seconds and tokens).
+# Token limits count input + output + cache writes (cache reads are not counted).
+review:
+  default: light
+  levels:
+    light:  { rounds: 1, seconds: 300,  tokens: 150000 }
+    normal: { rounds: 3, seconds: 600,  tokens: 400000 }
+    strict: { rounds: 5, seconds: 1200, tokens: 900000 }
+    max:    { rounds: 0, seconds: 3600, tokens: 3000000 }
+
+# Result summary shown in chat after a prompt. /mh detail <off|short|full> changes it per player.
+#   short  one line; hover shows everything (default)
+#   full   every value
+summary:
+  detail: short
+
+# Estimated price for API mode only (USD per 1M tokens). Empty = no price shown.
+# Subscription (claude CLI) never shows money. Fill in your own model prices, e.g.:
+#   claude-sonnet-5-5: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 }
+pricing: {}
 
 # Tone of Claude's replies in game.
 #   friendly  a helpful, relaxed tone; after a build it says what it made, offers 2-3 next ideas

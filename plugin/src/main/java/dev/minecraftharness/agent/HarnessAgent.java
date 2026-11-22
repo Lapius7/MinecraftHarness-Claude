@@ -237,9 +237,15 @@ public final class HarnessAgent {
         final String player, prompt, level;
         final boolean film;
         final BuildAnchor anchor;
+        final dev.minecraftharness.review.ReviewLevel review;
+        final long enqueuedAt = System.currentTimeMillis();
+        volatile long startedAt;
+        final dev.minecraftharness.summary.TurnStats stats = new dev.minecraftharness.summary.TurnStats();
         volatile boolean cancelled;
 
-        Job(String player, String prompt, boolean film, String level, BuildAnchor anchor) {
+        Job(String player, String prompt, boolean film, String level, BuildAnchor anchor,
+            dev.minecraftharness.review.ReviewLevel review) {
+            this.review = review;
             this.player = player;
             this.prompt = prompt;
             this.film = film;
@@ -247,6 +253,12 @@ public final class HarnessAgent {
             this.anchor = anchor;
         }
     }
+
+    /** Set by the plugin: a player's own review / detail setting, falling back to config.yml. */
+    public volatile java.util.function.Function<String, dev.minecraftharness.review.ReviewLevel> reviewLevelFor =
+        p -> dev.minecraftharness.review.ReviewLevel.OFF;
+    public volatile java.util.function.Function<String, dev.minecraftharness.summary.DetailLevel> detailLevelFor =
+        p -> dev.minecraftharness.summary.DetailLevel.SHORT;
 
     public enum EnqueueStatus { ACCEPTED, DUPLICATE, FULL, STOPPED }
 
@@ -269,9 +281,16 @@ public final class HarnessAgent {
      */
     public Enqueued enqueuePrompt(String playerName, String prompt, boolean filmMode, String reasoningLevel,
                                   BuildAnchor anchor, boolean urgent) {
+        return enqueuePrompt(playerName, prompt, filmMode, reasoningLevel, anchor, urgent, null);
+    }
+
+    /** {@code review} null uses the player's own setting (or the config default). */
+    public Enqueued enqueuePrompt(String playerName, String prompt, boolean filmMode, String reasoningLevel,
+                                  BuildAnchor anchor, boolean urgent, dev.minecraftharness.review.ReviewLevel review) {
         if (shutdown) return new Enqueued(EnqueueStatus.STOPPED, 0, queueLimit());
         int limit = queueLimit();
-        Job job = new Job(playerName, prompt, filmMode, reasoningLevel, anchor);
+        dev.minecraftharness.review.ReviewLevel rl = review != null ? review : reviewLevelFor.apply(playerName);
+        Job job = new Job(playerName, prompt, filmMode, reasoningLevel, anchor, rl);
         boolean interrupt = false;
         int position;
         synchronized (queueLock) {
@@ -323,6 +342,20 @@ public final class HarnessAgent {
     public int pendingCount() {
         synchronized (queueLock) {
             return pending.size();
+        }
+    }
+
+    /** Stops this player's running prompt (if it is theirs) and drops their waits; others are left alone. */
+    public void stopPlayer(String playerName) {
+        boolean mine;
+        synchronized (queueLock) {
+            mine = running != null && same(running.player, playerName);
+            if (mine) running.cancelled = true;
+        }
+        clearQueue(playerName);
+        if (mine) {
+            host.progress().cancel(playerName, "退出のため停止");
+            cli.cancel();
         }
     }
 
@@ -392,6 +425,7 @@ public final class HarnessAgent {
     private void runPrompt(String playerName, String prompt, boolean filmMode, String level, BuildAnchor anchor, Job job) {
         ModelCatalog.Model model = activeModel();
         FileConfiguration c = cfg();
+        job.startedAt = System.currentTimeMillis();
 
         if (model.backend() == ModelCatalog.Backend.API && resolveApiKey().isBlank()) {
             host.notifyChat(playerName,
@@ -413,7 +447,25 @@ public final class HarnessAgent {
         synchronized (st) {
             session = st.current();
         }
-        ToolHost.Turn turn = new ToolHost.Turn(playerName, filmMode, level);
+        dev.minecraftharness.summary.TurnStats stats = job.stats;
+        stats.setModel(model.id(), level, model.backend() == ModelCatalog.Backend.API ? "Anthropic API (APIキー)" : "claude CLI");
+        ToolHost.Turn turn = new ToolHost.Turn(playerName, filmMode, level, stats);
+        boolean ran = runBackend(playerName, userMessage, filmMode, level, session, turn, job, model);
+        if (!ran) return;
+
+        long mainTokens = stats.budgetTokens();
+        dev.minecraftharness.review.ReviewLevel rl = job.review == null ? dev.minecraftharness.review.ReviewLevel.OFF : job.review;
+        boolean built = stats.built() && turn.allToolsOk;
+        if (rl != dev.minecraftharness.review.ReviewLevel.OFF && built && !job.cancelled && !shutdown) {
+            reviewRounds(job, rl, session, model, prompt, mainTokens);
+        }
+        sendSummary(job, model);
+    }
+
+    /** Runs one backend turn. @return false when it could not start (the reason is already reported). */
+    private boolean runBackend(String playerName, String userMessage, boolean filmMode, String level, Session session,
+        ToolHost.Turn turn, Job job, ModelCatalog.Model model) {
+        FileConfiguration c = cfg();
         currentTurn = turn;
         TurnInput in = new TurnInput(playerName, userMessage, filmMode, level, session, turn,
             () -> shutdown || job.cancelled);
@@ -431,7 +483,7 @@ public final class HarnessAgent {
                 host.notifyChat(playerName, "MCP サーバーを起動できませんでした: " + ex.getMessage()
                     + "（config.yml の mcp.port を変えてみてください）", false);
                 host.progress().fail(playerName, "MCP を起動できません");
-                return;
+                return false;
             }
             String bin = c.getString("claude.binary", "");
             File work = new File(plugin.getDataFolder(), "claude-cli");
@@ -440,6 +492,114 @@ public final class HarnessAgent {
                 bin == null || bin.isBlank() ? ClaudeCliBackend.defaultBinary() : bin.trim(),
                 work, url, model.id(), Math.max(30, c.getInt("claude.idleTimeoutSeconds", 300))), in);
         }
+        return true;
+    }
+
+    /** Limits for a level from config.yml {@code review.levels.<id>}, falling back to built-in defaults. */
+    public dev.minecraftharness.review.ReviewLimits reviewLimits(dev.minecraftharness.review.ReviewLevel level) {
+        FileConfiguration c = cfg();
+        String base = "review.levels." + level.id() + ".";
+        int rounds = c.getInt(base + "rounds", level.defaultRounds() == Integer.MAX_VALUE ? 0 : level.defaultRounds());
+        int seconds = c.getInt(base + "seconds", level.defaultSeconds());
+        int tokens = c.getInt(base + "tokens", level.defaultTokens());
+        return new dev.minecraftharness.review.ReviewLimits(rounds <= 0 ? Integer.MAX_VALUE : rounds,
+            Math.max(1, seconds) * 1000L, Math.max(0, tokens));
+    }
+
+    private JsonObject reviewState(String anchorId) {
+        JsonObject req = new JsonObject();
+        if (anchorId != null) req.addProperty("anchorId", anchorId);
+        return host.callMainThread("review_state", req);
+    }
+
+    private static long longOf(JsonObject o, String key, long fallback) {
+        return o != null && o.has(key) && o.get(key).isJsonPrimitive() ? o.get(key).getAsLong() : fallback;
+    }
+
+    /** Waits (up to a minute) until the placement queue is empty, so the next measurement sees the finished build. */
+    private void awaitBuildIdle(Job job) {
+        long end = System.currentTimeMillis() + 60_000L;
+        while (System.currentTimeMillis() < end && !shutdown && !job.cancelled) {
+            JsonObject r = host.callMainThread("build_status", new JsonObject());
+            if (r == null || !r.has("active") || !r.get("active").getAsBoolean()) return;
+            try {
+                Thread.sleep(500L);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                return;
+            }
+        }
+    }
+
+    private void reviewRounds(Job job, dev.minecraftharness.review.ReviewLevel rl, Session session,
+        ModelCatalog.Model model, String request, long tokensBefore) {
+        String player = job.player;
+        dev.minecraftharness.summary.TurnStats stats = job.stats;
+        dev.minecraftharness.review.ReviewLoop loop =
+            new dev.minecraftharness.review.ReviewLoop(rl, reviewLimits(rl));
+        java.util.List<String> anchors = stats.anchors();
+        String anchorId = anchors.isEmpty() ? null : anchors.get(anchors.size() - 1);
+        long t0 = System.currentTimeMillis();
+        dev.minecraftharness.review.ReviewLoop.Stop stop;
+        awaitBuildIdle(job);
+        while (true) {
+            stop = loop.beforeRound(System.currentTimeMillis() - t0, stats.budgetTokens() - tokensBefore,
+                job.cancelled || shutdown);
+            if (stop != dev.minecraftharness.review.ReviewLoop.Stop.NONE) break;
+            int round = loop.rounds() + 1;
+            host.progress().review(player, round, loop.maxRounds(), "点検中・修正中");
+            JsonObject pre = reviewState(anchorId);
+            long snapsBefore = longOf(pre, "snapshots", -1);
+            ToolHost.Turn rt = new ToolHost.Turn(player, job.film, job.level, stats);
+            String msg = dev.minecraftharness.review.ReviewPrompt.build(rl, round, loop.maxLabel(), request,
+                anchorId == null ? "" : anchorId);
+            runBackend(player, msg, job.film, job.level, session, rt, job, model);
+            if (job.cancelled || shutdown) {
+                stop = loop.afterRound(null, true);
+                break;
+            }
+            awaitBuildIdle(job);
+            JsonObject post = reviewState(anchorId);
+            dev.minecraftharness.review.ReviewReport.Parsed rep = dev.minecraftharness.review.ReviewReport.parse(rt.raw());
+            boolean worseWorld = dev.minecraftharness.review.ReviewLoop.worseWorld(
+                (int) longOf(pre, "blocks", -1), (int) longOf(pre, "floating", -1),
+                (int) longOf(post, "blocks", -1), (int) longOf(post, "floating", -1));
+            stop = loop.afterRound(new dev.minecraftharness.review.ReviewLoop.RoundResult(
+                rep.reported(), rep.found(), rep.remaining(), Math.max(0, rep.found() - rep.remaining()), worseWorld));
+            stats.addReview(rep.found(), rep.remaining(), rep.fixed());
+            if (stop == dev.minecraftharness.review.ReviewLoop.Stop.WORSE) {
+                long added = longOf(post, "snapshots", snapsBefore) - snapsBefore;
+                if (snapsBefore >= 0 && added > 0) {
+                    JsonObject u = new JsonObject();
+                    u.addProperty("count", (int) Math.min(added, 16));
+                    host.callMainThread("undo_many", u);
+                }
+            }
+            if (stop != dev.minecraftharness.review.ReviewLoop.Stop.NONE) break;
+        }
+        stats.setReviewStop(stop.label());
+        host.progress().reviewEnd(player);
+        dev.minecraftharness.summary.TurnStats.Review r = stats.review();
+        String note = "レビュー終了(" + stop.label() + "): " + (r == null ? 0 : r.rounds()) + " 回点検"
+            + (r == null || r.rounds() == 0 ? "" : "、見つけた問題 " + r.found() + " 件、残り " + r.remaining() + " 件");
+        host.notifyChat(player, note, job.film);
+    }
+
+    private void sendSummary(Job job, ModelCatalog.Model model) {
+        dev.minecraftharness.summary.DetailLevel detail = detailLevelFor.apply(job.player);
+        if (detail == dev.minecraftharness.summary.DetailLevel.OFF || job.film) return;
+        dev.minecraftharness.progress.ProgressState.Timings t = host.progress().timings(job.player);
+        long wait = Math.max(0, job.startedAt - job.enqueuedAt);
+        if (t != null) {
+            job.stats.setTiming(new dev.minecraftharness.summary.TurnStats.Timing(
+                wait, t.thinkMs(), t.toolMs(), t.buildMs(), t.reviewMs()));
+        }
+        Double cost = null;
+        if (model.backend() == ModelCatalog.Backend.API) {
+            cost = dev.minecraftharness.summary.PriceTable.fromConfig(cfg().getConfigurationSection("pricing"))
+                .cost(model.id(), job.stats.tokens());
+        }
+        host.sendComponent(job.player, dev.minecraftharness.summary.SummaryRenderer.render(detail, job.stats, cost));
     }
 
     private synchronized String ensureMcp(int port) throws IOException {

@@ -69,6 +69,9 @@ public final class MinecraftHarnessPlugin extends JavaPlugin implements Listener
     private CameraRig cameraRig;
     private TelemetryHud telemetryHud;
     private ProgressDisplay progressDisplay;
+    private final dev.minecraftharness.progress.PendingMessages pendingMessages = new dev.minecraftharness.progress.PendingMessages();
+    private final Map<String, dev.minecraftharness.review.ReviewLevel> reviewLevels = new java.util.concurrent.ConcurrentHashMap<>();
+    private final Map<String, dev.minecraftharness.summary.DetailLevel> detailLevels = new java.util.concurrent.ConcurrentHashMap<>();
     private HarnessAgent agent;
 
     private static final String PERM_USE = "minecraftharness.use";
@@ -91,6 +94,12 @@ public final class MinecraftHarnessPlugin extends JavaPlugin implements Listener
         this.agent = new HarnessAgent(this, this::handleSyncWsAction);
         this.progressDisplay = new ProgressDisplay(agent.host().progress(),
             ProgressMode.parseOrDefault(getConfig().getString("progress.mode", ProgressMode.DEFAULT.id())));
+
+        progressDisplay.setObservers(dev.minecraftharness.progress.BarPlanner.Observers.parse(
+            getConfig().getString("progress.observers", "all"), dev.minecraftharness.progress.BarPlanner.Observers.ALL));
+        agent.reviewLevelFor = this::reviewLevelOf;
+        agent.detailLevelFor = this::detailLevelOf;
+        agent.host().componentSink = this::deliver;
 
         getLogger().info("Brigadier validator status: " + commandWirer.getBrigadierStatus());
 
@@ -132,9 +141,77 @@ public final class MinecraftHarnessPlugin extends JavaPlugin implements Listener
         if (progressDisplay != null) progressDisplay.cleanup();
     }
 
+    /** progress.onQuit: continue (default) keeps the running prompt, stop cancels it with the player's waits. */
+    private boolean stopOnQuit() {
+        return "stop".equalsIgnoreCase(getConfig().getString("progress.onQuit", "continue"));
+    }
+
     @EventHandler(priority = EventPriority.MONITOR)
     public void onPlayerQuit(org.bukkit.event.player.PlayerQuitEvent event) {
-        if (progressDisplay != null) progressDisplay.clear(event.getPlayer());
+        Player p = event.getPlayer();
+        if (progressDisplay == null) return;
+        if (stopOnQuit()) {
+            agent.stopPlayer(p.getName());
+            progressDisplay.clear(p);
+        } else {
+            progressDisplay.refresh(p);
+        }
+    }
+
+    @EventHandler(priority = EventPriority.MONITOR)
+    public void onPlayerJoin(org.bukkit.event.player.PlayerJoinEvent event) {
+        Player p = event.getPlayer();
+        // Results that arrived while the player was away. One tick later so the join messages come first.
+        Bukkit.getScheduler().runTaskLater(this, () -> {
+            if (!p.isOnline()) return;
+            var held = pendingMessages.drain(p.getName());
+            if (!held.isEmpty()) {
+                p.sendMessage(Component.text("⚡ 退出中に届いた結果(" + held.size() + " 件):", NamedTextColor.AQUA));
+                for (Component c : held) p.sendMessage(c);
+            }
+            if (progressDisplay != null) progressDisplay.tick(cameraRig.isFilmMode());
+        }, 1L);
+    }
+
+    // Boss bars can be dropped by the client when the world changes or the player dies: forget ours and the next tick draws it again.
+    @EventHandler(priority = EventPriority.MONITOR)
+    public void onWorldChange(org.bukkit.event.player.PlayerChangedWorldEvent event) {
+        if (progressDisplay != null) progressDisplay.refresh(event.getPlayer());
+    }
+
+    @EventHandler(priority = EventPriority.MONITOR)
+    public void onPlayerDeath(org.bukkit.event.entity.PlayerDeathEvent event) {
+        if (progressDisplay != null) progressDisplay.refresh(event.getEntity());
+    }
+
+    @EventHandler(priority = EventPriority.MONITOR)
+    public void onPlayerRespawn(org.bukkit.event.player.PlayerRespawnEvent event) {
+        Player p = event.getPlayer();
+        if (progressDisplay != null) progressDisplay.refresh(p);
+        Bukkit.getScheduler().runTaskLater(this, () -> {
+            if (p.isOnline() && progressDisplay != null) progressDisplay.tick(cameraRig.isFilmMode());
+        }, 2L);
+    }
+
+    private dev.minecraftharness.review.ReviewLevel reviewLevelOf(String player) {
+        dev.minecraftharness.review.ReviewLevel own = reviewLevels.get(player.toLowerCase(Locale.ROOT));
+        if (own != null) return own;
+        return dev.minecraftharness.review.ReviewLevel.parse(getConfig().getString("review.default", "light"),
+            dev.minecraftharness.review.ReviewLevel.LIGHT);
+    }
+
+    private dev.minecraftharness.summary.DetailLevel detailLevelOf(String player) {
+        dev.minecraftharness.summary.DetailLevel own = detailLevels.get(player.toLowerCase(Locale.ROOT));
+        if (own != null) return own;
+        return dev.minecraftharness.summary.DetailLevel.parse(getConfig().getString("summary.detail", "short"),
+            dev.minecraftharness.summary.DetailLevel.SHORT);
+    }
+
+    /** Shows a component to a player now, or keeps it until they rejoin. Main thread. */
+    private void deliver(String playerName, Component c) {
+        Player p = playerName == null ? null : Bukkit.getPlayerExact(playerName);
+        if (p != null && p.isOnline()) p.sendMessage(c);
+        else pendingMessages.add(playerName, c);
     }
 
     @EventHandler(priority = EventPriority.HIGHEST, ignoreCancelled = true)
@@ -196,6 +273,14 @@ public final class MinecraftHarnessPlugin extends JavaPlugin implements Listener
             return;
         }
 
+        var flag = dev.minecraftharness.review.ReviewFlag.extract(prompt);
+        if (flag.badValue() != null) {
+            player.sendMessage(Component.text("⚡ --review の値が分かりません: " + flag.badValue()
+                + "(off / light / normal / strict / max)", NamedTextColor.YELLOW));
+            return;
+        }
+        prompt = flag.prompt();
+        if (prompt.isBlank()) return;
         BuildAnchor anchor = contextProvider.captureAnchor(player.getName());
         ModelCatalog.Model model = agent.activeModel();
         // The prompt is already on screen as the player's own chat line, so it is not echoed back.
@@ -203,7 +288,7 @@ public final class MinecraftHarnessPlugin extends JavaPlugin implements Listener
         if (!cameraRig.isFilmMode() && progressDisplay.mode() == ProgressMode.OFF) {
             player.sendMessage(Component.text("⚡ 受付: " + model.ref() + " (" + reasoningMode + ")", NamedTextColor.AQUA));
         }
-        HarnessAgent.Enqueued r = agent.enqueuePrompt(player.getName(), prompt, cameraRig.isFilmMode(), reasoningMode, anchor, urgent);
+        HarnessAgent.Enqueued r = agent.enqueuePrompt(player.getName(), prompt, cameraRig.isFilmMode(), reasoningMode, anchor, urgent, flag.level());
         switch (r.status()) {
             case DUPLICATE -> player.sendMessage(Component.text("⚡ 同じ依頼がすでに実行中か待ち中です。重複は無視しました。", NamedTextColor.YELLOW));
             case FULL -> player.sendMessage(Component.text("⚡ 待ちが上限(" + r.limit() + " 件)に達しています。終わるまで待つか、/mh queue clear で待ちを消してください。", NamedTextColor.RED));
@@ -298,6 +383,24 @@ public final class MinecraftHarnessPlugin extends JavaPlugin implements Listener
                 yield buildPacer.finishBuild(label);
             }
             case "undo" -> performUndo();
+            case "build_status" -> {
+                JsonObject r = new JsonObject();
+                r.addProperty("active", buildPacer.isActive());
+                r.addProperty("remaining", buildPacer.getRemainingCount());
+                yield r;
+            }
+            case "review_state" -> reviewState(params);
+            case "undo_many" -> {
+                buildPacer.stopNow();
+                vfxEngine.clearIlluminations();
+                var sum = snapshotManager.undoMany(params.has("count") ? params.get("count").getAsInt() : 0);
+                buildPacer.pruneGuardedFluids();
+                if (sum.center() != null) vfxEngine.playUndoDissolve(sum.center());
+                JsonObject r = new JsonObject();
+                r.addProperty("ok", true);
+                r.addProperty("restoredBlocks", sum.restoredBlocks());
+                yield r;
+            }
             case "reset" -> performReset();
             case "notify_status" -> {
                 String msg = params.has("message") ? params.get("message").getAsString() : "";
@@ -306,6 +409,9 @@ public final class MinecraftHarnessPlugin extends JavaPlugin implements Listener
                     Player recipient = (playerName != null && !playerName.isBlank()) ? Bukkit.getPlayerExact(playerName) : null;
                     if (recipient != null) {
                         recipient.sendMessage(rendered);
+                    } else if (playerName != null && !playerName.isBlank()) {
+                        // The requester is away: hold it for when they come back instead of telling everyone.
+                        pendingMessages.add(playerName, rendered);
                     } else {
                         for (Player pl : Bukkit.getOnlinePlayers()) {
                             pl.sendMessage(rendered);
@@ -605,6 +711,47 @@ public final class MinecraftHarnessPlugin extends JavaPlugin implements Listener
         return r;
     }
 
+    /** Structure ids, snapshot counter and, for one structure, block and floating-block counts. */
+    private JsonObject reviewState(JsonObject params) {
+        JsonObject r = new JsonObject();
+        r.addProperty("ok", true);
+        r.addProperty("snapshots", snapshotManager.createdCount());
+        com.google.gson.JsonArray ids = new com.google.gson.JsonArray();
+        for (var rec : contextProvider.getRecentStructures()) ids.add(rec.id());
+        r.add("structures", ids);
+        r.addProperty("blocks", -1);
+        r.addProperty("floating", -1);
+        String aid = params.has("anchorId") && params.get("anchorId").isJsonPrimitive() ? params.get("anchorId").getAsString() : "";
+        var rec = contextProvider.findStructure(aid);
+        if (rec == null) return r;
+        org.bukkit.World w = Bukkit.getWorld(rec.anchor().worldName());
+        long volume = (long) (rec.maxX() - rec.minX() + 1) * (rec.maxY() - rec.minY() + 1) * (rec.maxZ() - rec.minZ() + 1);
+        if (w == null || volume > 400_000L) return r;
+        int blocks = 0;
+        int floating = 0;
+        int[][] dirs = {{1, 0, 0}, {-1, 0, 0}, {0, 1, 0}, {0, -1, 0}, {0, 0, 1}, {0, 0, -1}};
+        for (int x = rec.minX(); x <= rec.maxX(); x++) {
+            for (int y = rec.minY(); y <= rec.maxY(); y++) {
+                for (int z = rec.minZ(); z <= rec.maxZ(); z++) {
+                    org.bukkit.block.Block b = w.getBlockAt(x, y, z);
+                    if (b.getType().isAir() || !b.getType().isSolid()) continue;
+                    blocks++;
+                    boolean touching = false;
+                    for (int[] d : dirs) {
+                        if (w.getBlockAt(x + d[0], y + d[1], z + d[2]).getType().isSolid()) {
+                            touching = true;
+                            break;
+                        }
+                    }
+                    if (!touching) floating++;
+                }
+            }
+        }
+        r.addProperty("blocks", blocks);
+        r.addProperty("floating", floating);
+        return r;
+    }
+
     private JsonObject performUndo() {
         buildPacer.stopNow();
         vfxEngine.clearIlluminations();
@@ -712,6 +859,49 @@ public final class MinecraftHarnessPlugin extends JavaPlugin implements Listener
                 getConfig().set("progress.mode", next.get().id());
                 saveConfig();
                 sender.sendMessage("§b進捗表示: §a" + next.get().id());
+            }
+            case "review" -> {
+                if (!(sender instanceof Player p)) {
+                    sender.sendMessage("Players only.");
+                    return true;
+                }
+                var cur = reviewLevelOf(p.getName());
+                if (args.length >= 2) {
+                    var lv = dev.minecraftharness.review.ReviewLevel.parse(args[1], null);
+                    if (lv == null) {
+                        sender.sendMessage("§e使い方: /mh review <" + String.join("|", dev.minecraftharness.review.ReviewLevel.ids()) + ">");
+                        return true;
+                    }
+                    reviewLevels.put(p.getName().toLowerCase(Locale.ROOT), lv);
+                    cur = lv;
+                    p.sendMessage(Component.text("⚡ レビュー強度: " + lv.id(), NamedTextColor.AQUA));
+                }
+                Component menu = Component.text("レビュー強度: ", NamedTextColor.AQUA);
+                for (var lv : dev.minecraftharness.review.ReviewLevel.values()) {
+                    boolean on = lv == cur;
+                    menu = menu.append(Component.text(on ? "[" + lv.id() + "] " : lv.id() + " ",
+                            on ? NamedTextColor.GREEN : NamedTextColor.GRAY)
+                        .clickEvent(net.kyori.adventure.text.event.ClickEvent.runCommand("/mh review " + lv.id()))
+                        .hoverEvent(net.kyori.adventure.text.event.HoverEvent.showText(
+                            Component.text(lv.id() + ": クリックで切り替え", NamedTextColor.GRAY))));
+                }
+                p.sendMessage(menu);
+                p.sendMessage(Component.text("1 回だけ変えるなら、依頼の末尾に --review strict", NamedTextColor.DARK_GRAY));
+            }
+            case "detail" -> {
+                if (!(sender instanceof Player p)) {
+                    sender.sendMessage("Players only.");
+                    return true;
+                }
+                if (args.length >= 2) {
+                    var dl = dev.minecraftharness.summary.DetailLevel.parse(args[1], null);
+                    if (dl == null) {
+                        sender.sendMessage("§e使い方: /mh detail <off|short|full>");
+                        return true;
+                    }
+                    detailLevels.put(p.getName().toLowerCase(Locale.ROOT), dl);
+                }
+                sender.sendMessage("§b結果の詳細: §f" + detailLevelOf(p.getName()).id() + " §7(off / short / full)");
             }
             case "hud" -> {
                 if (args.length >= 2 && "reasoning".equalsIgnoreCase(args[1])) {
@@ -925,6 +1115,8 @@ public final class MinecraftHarnessPlugin extends JavaPlugin implements Listener
                 case "film", "fx" -> List.of("on", "off", "sound");
                 case "hud" -> List.of("on", "off", "reasoning");
                 case "progress" -> ProgressMode.ids();
+                case "review" -> dev.minecraftharness.review.ReviewLevel.ids();
+                case "detail" -> List.of("off", "short", "full");
                 case "stop" -> List.of("all");
                 case "queue" -> List.of("clear");
                 case "cam" -> List.of("orbit", "dolly", "off");

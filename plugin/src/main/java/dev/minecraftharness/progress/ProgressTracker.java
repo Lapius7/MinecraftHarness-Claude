@@ -70,6 +70,23 @@ public final class ProgressTracker {
         if (s != null) s.thinking();
     }
 
+    /** Review round {@code round} of {@code max} (0 = no cap) is in {@code stage}. */
+    public void review(String player, int round, int max, String stage) {
+        ProgressState s = get(player);
+        if (s != null) s.review(round, max, stage);
+    }
+
+    public void reviewEnd(String player) {
+        ProgressState s = get(player);
+        if (s != null) s.reviewEnd();
+    }
+
+    /** @return time per kind of work so far, or null when the player has no state. */
+    public ProgressState.Timings timings(String player) {
+        ProgressState s = get(player);
+        return s == null ? null : s.timings();
+    }
+
     public void responding(String player, int tokens) {
         ProgressState s = get(player);
         if (s != null) s.responding(tokens);
