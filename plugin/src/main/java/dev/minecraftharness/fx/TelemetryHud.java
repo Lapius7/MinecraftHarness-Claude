@@ -71,6 +71,8 @@ public final class TelemetryHud {
         Double liveTps = optNullableDouble(p, "liveTps");
         Long rTok = optNullableLong(p, "reasoningTokens");
         Long oTok = optNullableLong(p, "outputTokens");
+        Long compTok = optNullableLong(p, "completionTokens");
+        Long liveTok = optNullableLong(p, "liveTokens");
         Double cachePct = optNullableDouble(p, "cacheHitPct");
         String snippet = optStr(p, "reasoningSnippet", "");
         String activeTool = optStr(p, "activeTool", "");
@@ -90,13 +92,20 @@ public final class TelemetryHud {
         sb.append(callNo == 0 ? "⚡ " : "⚡ #" + callNo + " ").append(phase).append(" (").append(effort).append(")");
         sb.append(ttftMs == null ? " | Elapsed " : " | TTFT ").append(ttftTxt);
         sb.append(" | ").append(tpsTxt);
+        if (compTok != null && compTok > 0) {
+            sb.append(" | ").append(compTok).append(" tok");
+        } else if (oTok != null && oTok > 0) {
+            sb.append(" | ").append(oTok).append(" tok");
+        } else if (liveTok != null && liveTok > 0) {
+            sb.append(" | ~").append(liveTok).append(" tok");
+        }
         int retry = optInt(p, "retryCount", 0);
         if ("QUEUED".equals(phase) && retry > 0) sb.append(" | 再試行 ").append(retry);
         if (cachePct != null) {
             sb.append(" | Cache ").append(String.format(Locale.US, "%.0f%%", cachePct));
         }
-        if (rTok != null || oTok != null) {
-            sb.append(" | R:").append(rTok != null ? rTok : 0).append(" O:").append(oTok != null ? oTok : 0);
+        if (rTok != null && rTok > 0) {
+            sb.append(" | R:").append(rTok).append(" O:").append(oTok != null ? oTok : 0);
         }
 
         bossBar.name(Component.text(sb.toString(), colorForText(phase)));

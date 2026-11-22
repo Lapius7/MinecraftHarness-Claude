@@ -233,11 +233,11 @@ export function renderDashboardHtml(): string {
 
   <form class="prompt-bar" id="promptForm">
     <input id="promptInput" placeholder="ここから直接テスト指示を送信 (例: 目の前に光るジャンプ台付きのネオン神殿を作って)" />
-    <button type="submit" class="primary">Send to OpenClaw</button>
+    <button type="submit" class="primary" id="sendBtn">Send Prompt</button>
   </form>
 
   <script>
-    const state = { traces: [], totals: {} };
+    const state = { traces: [], totals: {}, agentMode: "openclaw" };
 
     const esc = (s) => String(s ?? "")
       .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
@@ -309,7 +309,7 @@ export function renderDashboardHtml(): string {
         ...(t.preInference ? [
           ["Bridge queue", fmtMs(t.preInference.queueMs)],
           ["Bridge prep", fmtMs(t.preInference.preparationMs)],
-          ["OpenClaw → model", fmtMs(t.preInference.agentMs)],
+          [(state.agentMode === "openclaw" ? "OpenClaw → model" : "Agent → model"), fmtMs(t.preInference.agentMs)],
           ["Receipt → token", fmtMs(t.firstTokenAt == null ? null : t.preInference.queueMs + t.preInference.preparationMs + t.preInference.agentMs + t.ttftWallMs)],
         ] : []),
         ["TTFT", ttftDetail],
@@ -401,6 +401,11 @@ export function renderDashboardHtml(): string {
         const snap = JSON.parse(e.data);
         preparing = Boolean(snap.preparing);
         state.traces = snap.traces || [];
+        if (snap.agentMode) {
+          state.agentMode = snap.agentMode;
+          const btn = document.getElementById("sendBtn");
+          if (btn) btn.textContent = snap.agentMode === "openclaw" ? "Send to OpenClaw" : "Send to AI";
+        }
         if (snap.configuredThinking) {
           document.getElementById("thinkingSel").value = snap.configuredThinking;
         }

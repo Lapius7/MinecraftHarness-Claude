@@ -43,7 +43,7 @@ Type one line in chat (`!<prompt>`) and watch AI design original builds, interio
 - **Minecraft Java Edition 1.21.x / 26.x** (tested on PaperMC 1.21.4; compatible with Paper/Purpur **1.21.0–1.21.x & 26.x**, vanilla client or Fabric + Iris Shaders)
 - An API key for Cerebras, OpenCode Go, OpenRouter, OpenDesign Go, Command Code, or any OpenAI Chat Completions-compatible model with tool calling
 
-> **Pre-built Plugin JAR**: You can also download `MinecraftHarness-*.jar` directly from [GitHub Releases](https://github.com/ykundesu/MinecraftHarness/releases) (every push to `main` automatically builds and uploads the latest JAR to a Draft Release via GitHub Actions) and drop it into your PaperMC `plugins/` folder.
+> **Standalone Single-JAR Mode (No Node.js Required)**: You can download `MinecraftHarness-*.jar` directly from [GitHub Releases](https://github.com/ykundesu/MinecraftHarness/releases), drop it into your PaperMC / Purpur `plugins/` folder, start the server, and run `/mh key <cerebras|opencode-go|openrouter|opendesign|commandcode> <YOUR_API_KEY>` (or edit `plugins/MinecraftHarness/config.yml`). When no external Bridge is connected, the plugin's built-in Java AI agent handles prompts automatically! If you also run the Node.js Bridge (`.\restart-all.ps1`), the plugin automatically switches to OpenClaw Gateway + Live Telemetry Dashboard mode.
 
 ### 1. Configure your API key
 Copy `.env.example` to `.env` in the project root and set your key:
@@ -170,7 +170,16 @@ Put `MY_PROVIDER_API_KEY=...` in `.env` and select it with `.\set-provider.ps1 m
 - **Java 21 以上**（Paper 26.x で動かす場合は **Java 25 以上**） / **Node.js 20 以上** / **Minecraft Java 1.21.x または 26.x**
 - Cerebras・OpenCode Go・OpenRouter・OpenDesign Go などの OpenAI 互換 API キー（OpenClaw モード標準／OpenClaw 未導入環境では `.\restart-all.ps1 -Direct` で自動スタンドアロン起動）
 
-### 3ステップ起動（Windows）
+### JAR 単体で動かす場合（Node.js 不要・Mac / Linux / レンタルサーバー対応）
+1. [GitHub Releases](https://github.com/ykundesu/MinecraftHarness/releases) から `MinecraftHarness-*.jar` をダウンロードし、PaperMC / Purpur の `plugins/` フォルダへ配置して起動
+2. サーバーコンソールまたはゲーム内チャット（OP権限）で API キーを設定（または `plugins/MinecraftHarness/config.yml` に直接記入）：
+   ```text
+   /mh key cerebras <APIキー>
+   /mh model
+   ```
+3. そのままチャットで `!目の前に秘密基地作って` と話しかけるだけで動きます！（Node.js Bridge / OpenClaw が接続された場合は自動で Bridge モードへ切り替わります）
+
+### 3ステップ起動（Windows・OpenClaw / ダッシュボード込みフル構成）
 1. ルートの `.env.example` を `.env` にコピーし、`CEREBRAS_API_KEY=...` 等の API キーを記入
 2. PowerShell で以下を実行（初回は PaperMC ダウンロード・ビルドまで自動完了します）：
    ```powershell

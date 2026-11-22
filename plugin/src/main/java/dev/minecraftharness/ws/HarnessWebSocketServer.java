@@ -26,6 +26,7 @@ public final class HarnessWebSocketServer extends WebSocketServer {
 
     private final Plugin plugin;
     private final BiFunction<String, JsonObject, JsonObject> syncRequestHandler;
+    private Runnable onDisconnectCallback;
 
     public HarnessWebSocketServer(
         Plugin plugin,
@@ -37,6 +38,10 @@ public final class HarnessWebSocketServer extends WebSocketServer {
         this.plugin = plugin;
         this.syncRequestHandler = syncRequestHandler;
         setReuseAddr(true);
+    }
+
+    public void setOnDisconnectCallback(Runnable callback) {
+        this.onDisconnectCallback = callback;
     }
 
     @Override
@@ -55,6 +60,9 @@ public final class HarnessWebSocketServer extends WebSocketServer {
     @Override
     public void onClose(WebSocket conn, int code, String reason, boolean remote) {
         plugin.getLogger().info("MinecraftHarness bridge disconnected (" + code + "): " + reason);
+        if (onDisconnectCallback != null) {
+            Bukkit.getScheduler().runTask(plugin, onDisconnectCallback);
+        }
     }
 
     @Override

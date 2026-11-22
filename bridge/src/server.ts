@@ -565,6 +565,7 @@ function summarizeToolResult(toolName: string, body: Record<string, unknown>, re
 
 async function main() {
   const telemetry = new TelemetryHub();
+  telemetry.setAgentMode(AGENT_MODE);
   telemetry.setConfiguredThinking(currentThinking);
 
   const mcClient = new McClient(WS_URL);
@@ -813,7 +814,7 @@ async function main() {
     telemetry.broadcastModelsUpdated();
     if (!mcClient.isConnected()) return;
     try {
-      const payload = listConfiguredModels();
+      const payload = { ...listConfiguredModels(), agentMode: AGENT_MODE };
       void mcClient.request("sync_models", payload as unknown as Record<string, unknown>, 5000).catch(() => {});
     } catch {}
   }

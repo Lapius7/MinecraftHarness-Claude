@@ -1,0 +1,82 @@
+# MinecraftHarness Configuration
+# Works in TWO modes automatically:
+#   1. Bridge / OpenClaw Mode: If the Node.js Bridge connects on ws://127.0.0.1:25580,
+#      prompts automatically use Bridge (OpenClaw Gateway or Direct).
+#   2. Standalone JAR Mode: If no Bridge is connected, the plugin runs its built-in
+#      Java AI agent directly — no Node.js or external process required!
+
+# Default reasoning effort (off | minimal | low | medium | high)
+reasoning: low
+
+standalone:
+  # Automatically handle prompts inside the JAR when no external Bridge is connected
+  enabled: true
+  # Active model in standalone mode (<provider>/<model-id>)
+  activeModel: cerebras/moonshotai-kimi-k3.1-pro-trial
+  # Maximum tool-calling steps per prompt turn
+  maxSteps: 12
+
+  # API keys can be set here directly, via /mh key <provider> <api-key>,
+  # or via environment variables / .env file (e.g. CEREBRAS_API_KEY, OPENROUTER_API_KEY).
+  providers:
+    cerebras:
+      baseUrl: https://api.cerebras.ai/v1
+      apiKey: ""
+      apiKeyEnv: CEREBRAS_API_KEY
+      models:
+        - id: moonshotai-kimi-k3.1-pro-trial
+          name: Kimi K3.1 Pro (Cerebras Trial)
+          supportsImage: true
+    commandcode:
+      baseUrl: https://api.commandcode.ai/provider/v1
+      apiKey: ""
+      apiKeyEnv: CMD_API_KEY
+      models:
+        - id: moonshotai/Kimi-K3.1-Pro
+          name: Kimi K3.1 Pro (Command Code)
+          supportsImage: true
+    opendesign:
+      baseUrl: https://amr-link.open-design.ai/v1
+      apiKey: ""
+      apiKeyEnv: OPENDESIGN_API_KEY
+      models:
+        - id: deepseek-v4.1-flash
+          name: DeepSeek V4.1 Flash (OpenDesign Go)
+          supportsImage: true
+    opencode-go:
+      baseUrl: https://opencode.ai/zen/go/v1
+      apiKey: ""
+      apiKeyEnv: OPENCODE_GO_API_KEY
+      models:
+        - id: deepseek-v4.1-flash
+          name: DeepSeek V4.1 Flash (OpenCode Go)
+          supportsImage: true
+        - id: deepseek-v4-pro
+          name: DeepSeek V4 Pro (OpenCode Go)
+          supportsImage: true
+        - id: kimi-k2.5
+          name: Kimi K2.5 (OpenCode Go)
+          supportsImage: true
+        - id: glm-5.3
+          name: GLM 5.3 (OpenCode Go)
+          supportsImage: true
+        - id: minimax-m2.5
+          name: MiniMax M2.5 (OpenCode Go)
+          supportsImage: true
+    openrouter:
+      baseUrl: https://openrouter.ai/api/v1
+      apiKey: ""
+      apiKeyEnv: OPENROUTER_API_KEY
+      models:
+        - id: moonshotai/kimi-k2.5
+          name: Kimi K2.5 (OpenRouter)
+          supportsImage: true
+        - id: deepseek/deepseek-v3.2
+          name: DeepSeek V3.2 (OpenRouter)
+          supportsImage: false
+        - id: anthropic/claude-sonnet-4.5
+          name: Claude Sonnet 4.5 (OpenRouter)
+          supportsImage: true
+        - id: google/gemini-2.5-flash
+          name: Gemini 2.5 Flash (OpenRouter)
+          supportsImage: true

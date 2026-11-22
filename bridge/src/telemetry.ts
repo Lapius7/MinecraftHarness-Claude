@@ -98,6 +98,8 @@ export interface HudPayload {
   completionMs: number | null;
   reasoningTokens: number | null;
   outputTokens: number | null;
+  completionTokens: number | null;
+  liveTokens: number | null;
   cacheHitPct: number | null;
   reasoningSnippet: string;
   answerSnippet?: string;
@@ -215,7 +217,7 @@ export class TelemetryHub {
       id: `call-${this.callSeq}`,
       callNumber: this.callSeq,
       promptRunId: this.activePromptRunId,
-      promptText: this.activePromptText || "(Direct OpenClaw turn)",
+      promptText: this.activePromptText || "(Direct turn)",
       preInference: this.firstCallPending && this.dispatchAt ? {
         queueMs: this.runStartedAt - this.receivedAt,
         preparationMs: this.dispatchAt - this.runStartedAt,
@@ -563,6 +565,7 @@ export class TelemetryHub {
       activePromptRunId: this.activePromptRunId,
       activePromptText: this.activePromptText,
       preparing: this.firstCallPending,
+      agentMode: this.agentMode,
       configuredThinking: this.configuredThinking,
       activeReasoningEffort: this.activeReasoningEffort,
       totals: {
@@ -666,6 +669,8 @@ export class TelemetryHub {
         completionMs: null,
         reasoningTokens: null,
         outputTokens: null,
+        completionTokens: null,
+        liveTokens: null,
         cacheHitPct: null,
         reasoningSnippet: "",
         activeTool: this.activeToolName,
@@ -689,6 +694,8 @@ export class TelemetryHub {
       completionMs: latest.completionMs,
       reasoningTokens: latest.reasoningTokens,
       outputTokens: latest.outputTokens,
+      completionTokens: latest.completionTokens,
+      liveTokens: latest.streamedChars > 0 ? Math.max(latest.liveChunkCount, Math.round(latest.streamedChars / 3.6)) : null,
       cacheHitPct: latest.cacheHitPct,
       reasoningSnippet: tail,
       answerSnippet: latest.status === "RESPONDING" ? Array.from(latest.contentText.slice(-200)).slice(-80).join("").replace(/\s+/g, " ").trim() : undefined,
@@ -696,6 +703,11 @@ export class TelemetryHub {
       activeTool: this.activeToolName,
       done: latest.status === "DONE" || latest.status === "ERROR",
     };
+  }
+
+  private agentMode = "openclaw";
+  setAgentMode(mode: string): void {
+    this.agentMode = mode;
   }
 
   private configuredThinking = "low";
