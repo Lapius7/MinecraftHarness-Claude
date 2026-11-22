@@ -242,6 +242,8 @@ public final class HarnessAgent {
         volatile long startedAt;
         final dev.minecraftharness.summary.TurnStats stats = new dev.minecraftharness.summary.TurnStats();
         volatile boolean cancelled;
+        /** True when the level in {@code review} was set on purpose (flag or /mh review), not the config default. */
+        volatile boolean reviewExplicit;
 
         Job(String player, String prompt, boolean film, String level, BuildAnchor anchor,
             dev.minecraftharness.review.ReviewLevel review) {
@@ -254,6 +256,8 @@ public final class HarnessAgent {
         }
     }
 
+    /** Level the player set on purpose with /mh review, or null. */
+    public volatile java.util.function.Function<String, dev.minecraftharness.review.ReviewLevel> reviewExplicitFor = p -> null;
     /** Set by the plugin: a player's own review / detail setting, falling back to config.yml. */
     public volatile java.util.function.Function<String, dev.minecraftharness.review.ReviewLevel> reviewLevelFor =
         p -> dev.minecraftharness.review.ReviewLevel.OFF;
@@ -289,8 +293,10 @@ public final class HarnessAgent {
                                   BuildAnchor anchor, boolean urgent, dev.minecraftharness.review.ReviewLevel review) {
         if (shutdown) return new Enqueued(EnqueueStatus.STOPPED, 0, queueLimit());
         int limit = queueLimit();
-        dev.minecraftharness.review.ReviewLevel rl = review != null ? review : reviewLevelFor.apply(playerName);
+        dev.minecraftharness.review.ReviewLevel explicit = review != null ? review : reviewExplicitFor.apply(playerName);
+        dev.minecraftharness.review.ReviewLevel rl = explicit != null ? explicit : reviewLevelFor.apply(playerName);
         Job job = new Job(playerName, prompt, filmMode, reasoningLevel, anchor, rl);
+        job.reviewExplicit = explicit != null;
         boolean interrupt = false;
         int position;
         synchronized (queueLock) {
@@ -450,14 +456,16 @@ public final class HarnessAgent {
         dev.minecraftharness.summary.TurnStats stats = job.stats;
         stats.setModel(model.id(), level, model.backend() == ModelCatalog.Backend.API ? "Anthropic API (APIキー)" : "claude CLI");
         ToolHost.Turn turn = new ToolHost.Turn(playerName, filmMode, level, stats);
+        turn.reviewExplicit = job.reviewExplicit ? job.review : null;
         boolean ran = runBackend(playerName, userMessage, filmMode, level, session, turn, job, model);
         if (!ran) return;
 
         long mainTokens = stats.budgetTokens();
-        dev.minecraftharness.review.ReviewLevel rl = job.review == null ? dev.minecraftharness.review.ReviewLevel.OFF : job.review;
-        boolean built = stats.built() && turn.allToolsOk;
-        if (rl != dev.minecraftharness.review.ReviewLevel.OFF && built && !job.cancelled && !shutdown) {
-            reviewRounds(job, rl, session, model, prompt, mainTokens);
+        dev.minecraftharness.review.ReviewLevel rl = dev.minecraftharness.review.ReviewChoice.resolve(
+            job.reviewExplicit ? job.review : null, turn.reviewChoice, job.review);
+        if (dev.minecraftharness.review.ReviewChoice.shouldRun(rl, stats.built(), turn.reviewRequested, turn.allToolsOk)
+            && !job.cancelled && !shutdown) {
+            reviewRounds(job, rl, session, model, prompt, mainTokens, turn.reviewAnchor);
         }
         sendSummary(job, model);
     }
@@ -532,13 +540,14 @@ public final class HarnessAgent {
     }
 
     private void reviewRounds(Job job, dev.minecraftharness.review.ReviewLevel rl, Session session,
-        ModelCatalog.Model model, String request, long tokensBefore) {
+        ModelCatalog.Model model, String request, long tokensBefore, String fallbackAnchor) {
         String player = job.player;
         dev.minecraftharness.summary.TurnStats stats = job.stats;
         dev.minecraftharness.review.ReviewLoop loop =
             new dev.minecraftharness.review.ReviewLoop(rl, reviewLimits(rl));
         java.util.List<String> anchors = stats.anchors();
-        String anchorId = anchors.isEmpty() ? null : anchors.get(anchors.size() - 1);
+        String anchorId = anchors.isEmpty() ? (fallbackAnchor == null || fallbackAnchor.isBlank() ? "last" : fallbackAnchor)
+            : anchors.get(anchors.size() - 1);
         long t0 = System.currentTimeMillis();
         dev.minecraftharness.review.ReviewLoop.Stop stop;
         awaitBuildIdle(job);

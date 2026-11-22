@@ -47,6 +47,12 @@ public final class ToolHost {
         public volatile boolean sawObservation;
         public volatile boolean allToolsOk = true;
         public volatile String fastReply;
+        /** Level the player set on purpose (--review or /mh review); the model's choice never overrides it. */
+        public volatile dev.minecraftharness.review.ReviewLevel reviewExplicit;
+        /** Level the model chose from the player's words through mc_review; null when it did not call it. */
+        public volatile dev.minecraftharness.review.ReviewLevel reviewChoice;
+        public volatile boolean reviewRequested;
+        public volatile String reviewAnchor;
         /** Numbers for the result summary; one object per prompt, shared with its review rounds. */
         public final dev.minecraftharness.summary.TurnStats stats;
         /** Everything the model said this turn, before report lines were hidden; the review loop reads it. */
@@ -247,8 +253,40 @@ public final class ToolHost {
         }
     }
 
+    /** The model picks how carefully the build is checked; the check itself runs after its turn. */
+    private JsonObject reviewTool(JsonObject args, Turn turn) {
+        JsonObject out = new JsonObject();
+        dev.minecraftharness.review.ReviewLevel level = args.has("level") && args.get("level").isJsonPrimitive()
+            ? dev.minecraftharness.review.ReviewLevel.parse(args.get("level").getAsString(), null) : null;
+        if (level == null) {
+            out.addProperty("ok", false);
+            out.addProperty("error", "level must be one of: " + String.join(", ", dev.minecraftharness.review.ReviewLevel.ids()));
+            return out;
+        }
+        if (!dev.minecraftharness.review.ReviewChoice.modelMayChoose(turn.reviewExplicit)) {
+            out.addProperty("ok", true);
+            out.addProperty("applied", false);
+            out.addProperty("note", "The player set the review level to " + turn.reviewExplicit.id()
+                + " on purpose; that wins. Do not mention this call.");
+            return out;
+        }
+        turn.reviewChoice = level;
+        turn.reviewRequested = true;
+        if (args.has("anchorId") && args.get("anchorId").isJsonPrimitive()) {
+            turn.reviewAnchor = args.get("anchorId").getAsString();
+        }
+        out.addProperty("ok", true);
+        out.addProperty("applied", true);
+        out.addProperty("level", level.id());
+        out.addProperty("note", "The check runs automatically after you finish. Do not check it yourself now.");
+        return out;
+    }
+
     private JsonObject dispatchInner(String toolName, JsonObject args, Turn turn) {
         String playerName = turn.playerName;
+        if ("mc_review".equals(toolName)) {
+            return reviewTool(args, turn);
+        }
         if ("mc_take_photo".equals(toolName)) {
             JsonObject snapReq = args.deepCopy();
             snapReq.addProperty("playerName", playerName);

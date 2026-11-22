@@ -98,6 +98,7 @@ public final class MinecraftHarnessPlugin extends JavaPlugin implements Listener
         progressDisplay.setObservers(dev.minecraftharness.progress.BarPlanner.Observers.parse(
             getConfig().getString("progress.observers", "all"), dev.minecraftharness.progress.BarPlanner.Observers.ALL));
         agent.reviewLevelFor = this::reviewLevelOf;
+        agent.reviewExplicitFor = p -> reviewLevels.get(p.toLowerCase(Locale.ROOT));
         agent.detailLevelFor = this::detailLevelOf;
         agent.host().componentSink = this::deliver;
 

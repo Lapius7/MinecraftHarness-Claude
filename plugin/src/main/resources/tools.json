@@ -436,5 +436,32 @@
       },
       "additionalProperties": false
     }
+  },
+  {
+    "name": "mc_review",
+    "description": "Decide how carefully the finished build is checked, from what the player said. Call it only when the player's words say something about checking: e.g. 'ちゃんと確認して' / '念入りに' / 'しっかり見直して' (strict or max), 'さっと' / '確認はいらない' (light or off), or when they ask to check/fix up a build that already exists without asking for a new one ('点検して', '見直して'). Do not call it otherwise: the server default applies. The check runs after your turn ends; do not start it yourself.",
+    "input_schema": {
+      "type": "object",
+      "properties": {
+        "level": {
+          "type": "string",
+          "enum": [
+            "off",
+            "light",
+            "normal",
+            "strict",
+            "max"
+          ],
+          "description": "off = no check, light = 1 round, normal = up to 3, strict = up to 5 with a strict checklist, max = as long as the budget allows."
+        },
+        "anchorId": {
+          "type": "string",
+          "description": "Build to check when no build was made this turn (e.g. 's1' or 'last'). Default 'last'."
+        }
+      },
+      "required": [
+        "level"
+      ]
+    }
   }
 ]
