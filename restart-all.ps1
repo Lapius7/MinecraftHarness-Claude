@@ -123,8 +123,12 @@ if ($StopOnly) {
 Write-Host "=== [2/4] Checking & reloading builds ===" -ForegroundColor Cyan
 
 $pluginDir = Join-Path $root "plugin"
-$builtJar  = Join-Path $pluginDir "build\libs\MinecraftHarness-0.1.0.jar"
-$destJar   = Join-Path $root "server\plugins\MinecraftHarness-0.1.0.jar"
+$gradleText = Get-Content -Raw (Join-Path $pluginDir "build.gradle.kts")
+$pluginVer = if ($gradleText -match 'version\s*=\s*"([^"]+)"') { $Matches[1] } else { "0.1.1" }
+$jarName   = "MinecraftHarness-$pluginVer.jar"
+$builtJar  = Join-Path $pluginDir "build\libs\$jarName"
+$pluginsDir = Join-Path $root "server\plugins"
+$destJar   = Join-Path $pluginsDir $jarName
 
 $needPluginBuild = $Build -or (-not (Test-Path $builtJar))
 if (-not $needPluginBuild -and -not $SkipBuild) {
@@ -147,9 +151,11 @@ if ($needPluginBuild) {
     Write-Host "  PaperMC plugin JAR is up-to-date." -ForegroundColor Gray
 }
 
-New-Item -ItemType Directory -Force -Path (Split-Path -Parent $destJar) | Out-Null
+New-Item -ItemType Directory -Force -Path $pluginsDir | Out-Null
+Get-ChildItem -Path $pluginsDir -Filter "MinecraftHarness-*.jar" -ErrorAction SilentlyContinue |
+    Where-Object { $_.Name -ne $jarName } | Remove-Item -Force
 Copy-Item -Force -Path $builtJar -Destination $destJar
-Write-Host "  Synced MinecraftHarness-0.1.0.jar -> server\plugins\" -ForegroundColor Green
+Write-Host "  Synced $jarName -> server\plugins\" -ForegroundColor Green
 
 $bridgeDir    = Join-Path $root "bridge"
 if (-not (Test-Path (Join-Path $bridgeDir "node_modules"))) {

@@ -3,7 +3,7 @@ plugins {
 }
 
 group = "dev.minecraftharness"
-version = "0.1.0"
+version = "0.1.1"
 
 repositories {
     mavenCentral()
@@ -22,5 +22,5 @@ tasks.withType<JavaCompile>().configureEach {
 
 tasks.jar {
     archiveBaseName.set("MinecraftHarness")
-    archiveVersion.set("0.1.0")
+    archiveVersion.set(project.version.toString())
 }

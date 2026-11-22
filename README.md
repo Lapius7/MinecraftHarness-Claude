@@ -28,7 +28,7 @@ Type one line in chat (`!<prompt>`) and watch AI design original builds, interio
 ---
 
 ## Project Layout
-- `plugin/` — PaperMC 1.21.4 Java plugin (`MinecraftHarness-0.1.0.jar`, local WebSocket `:25580`)
+- `plugin/` — PaperMC 1.21.x / 26.x Java plugin (`MinecraftHarness-*.jar`, local WebSocket `:25580`)
 - `bridge/` — Node.js TypeScript Bridge daemon (`:25581`), Telemetry Proxy (`:25582`), Direct Agent, MCP server (`mc_*`), and prompt workspace
 - `config/` — Clean configuration template (`openclaw.example.json`)
 - `server/` — PaperMC 1.21.4 local server setup & launch scripts
@@ -115,6 +115,29 @@ Put `MY_PROVIDER_API_KEY=...` in `.env` and select it with `.\set-provider.ps1 m
 
 ---
 
+## Basic Usage (In-Game)
+
+1. **Build where you are looking**: Look at an open spot and type `!<prompt>` in chat:
+   ```text
+   !Build a cozy wooden cottage with a glowing garden and interior
+   !Create a playable 3-stage neon parkour minigame with jump pads and a finish fireworks trigger
+   ```
+2. **Iterate naturally**: Follow up in the same conversation—MinecraftHarness remembers your recent builds (`s1`, `s2`, ...) so you can walk around and still edit them:
+   ```text
+   !Add a second-floor balcony and warm lanterns around the entrance
+   !Lower that house by 2 blocks
+   ```
+3. **Quick adjustments & undo**:
+   - `/mh shift -3` — Move the last build down 3 blocks without rebuilding
+   - `/mh undo` — Restore the terrain & remove entities cleanly
+   - `!new` — Start a fresh conversation session
+4. **Switch AI models live**:
+   - Type `/mh model` in chat for a clickable menu, or specify any model directly (e.g. `/mh model cerebras`, `/mh model opendesign`, `/mh model opencode-go/kimi-k2.5`, `/mh model openrouter/deepseek/deepseek-v3.2`).
+5. **Watch live reasoning & metrics**:
+   - Open `http://127.0.0.1:25581/` in your browser to see live reasoning tokens, TTFT, TPS, prompt cache hit rate, captured screenshots, and a model/thinking selector.
+
+---
+
 ## In-Game Commands
 - `!<prompt>` or `/mh <prompt>` — Build, edit, or create minigames at your gaze target
 - `/mh model [name]` — Show clickable model selector in chat or switch active provider/model live (e.g. `/mh model cerebras`, `/mh model opendesign`, `/mh model opencode-go`, `/mh model openrouter/deepseek/deepseek-v3.2`)
@@ -141,11 +164,11 @@ Put `MY_PROVIDER_API_KEY=...` in `.env` and select it with `.\set-provider.ps1 m
 
 ## 日本語クイックスタート
 
-**MinecraftHarness** は、マイクラ Java 版 1.21.4（MOD不要・シェーダー対応）のチャット欄に `!作りたいもの` と打つだけで、視線の先にAIがオリジナル建築・内装・コマンドブロック製ミニゲームをリアルタイム生成してくれる PaperMC プラグイン＋Node.js ブリッジです。
+**MinecraftHarness** は、マイクラ Java 版 **1.21.x / 26.x**（MOD不要・シェーダー対応）のチャット欄に `!作りたいもの` と打つだけで、視線の先にAIがオリジナル建築・内装・コマンドブロック製ミニゲームをリアルタイム生成してくれる PaperMC プラグイン＋Node.js ブリッジです。
 
 ### 必要環境
-- **Java 21 以上** / **Node.js 20 以上** / **Minecraft Java 1.21.4**
-- Cerebras などの OpenAI 互換 API キー（OpenClaw モード標準／OpenClaw 未導入環境では `.\restart-all.ps1 -Direct` で自動スタンドアロン起動）
+- **Java 21 以上**（Paper 26.x で動かす場合は **Java 25 以上**） / **Node.js 20 以上** / **Minecraft Java 1.21.x または 26.x**
+- Cerebras・OpenCode Go・OpenRouter・OpenDesign Go などの OpenAI 互換 API キー（OpenClaw モード標準／OpenClaw 未導入環境では `.\restart-all.ps1 -Direct` で自動スタンドアロン起動）
 
 ### 3ステップ起動（Windows）
 1. ルートの `.env.example` を `.env` にコピーし、`CEREBRAS_API_KEY=...` 等の API キーを記入
@@ -153,9 +176,27 @@ Put `MY_PROVIDER_API_KEY=...` in `.env` and select it with `.\set-provider.ps1 m
    ```powershell
    .\restart-all.ps1
    ```
-3. マイクラ 1.21.4 で `localhost:25565` に接続し、PaperMC コンソールで `op <自分のMCID>` を実行したら、チャットで `!目の前に秘密基地作って` のように話しかけるだけ！
+3. マイクラで `localhost:25565` に接続し、PaperMC コンソールで `op <自分のMCID>` を実行したら準備完了！
 
-ブラウザで **`http://127.0.0.1:25581/`** を開くと、AIの思考テキスト・TTFT・TPS・キャッシュヒット率・スクショをリアルタイムで確認できます。
+### 簡単な使い方（ゲーム内）
+- **視線の先に建築・ミニゲーム生成**: 作りたい場所を見て、チャットに `!` 付きで話しかけます
+  ```text
+  !目の前に温泉付きの和風旅館を作って
+  !ジャンプ台とゴール演出つきの遊べるアスレチックを作って
+  ```
+- **続けて修正・アレンジ**: 前の建築を覚えているので、移動した後でもそのまま追加指示できます
+  ```text
+  !さっきの建物の屋根をもう少し高くして、入口に提灯をつけて
+  !全体を2ブロック下げて
+  ```
+- **よく使うコマンド**:
+  - `/mh model` — チャット上のクリックメニューで AI モデルを即切替（`/mh model openrouter/<任意のモデルID>` や `/mh model opencode-go/<モデルID>` も可）
+  - `/mh undo` — 直前の建築・エンティティをきれいに元に戻す
+  - `/mh shift -3` — 直前の建築を丸ごと下へ 3 ブロック移動（`/mh shift <右> <上> <前>`）
+  - `!new` — 会話履歴をリセットして新しい話題に切り替える
+  - `/mh reasoning <off|low|medium|high>` — AI の思考量（`reasoning_effort`）を変更
+  - `/mh film on` / `/mh cam orbit` — 録画向けの HUD 非表示・自動周回カメラ
+- **ライブダッシュボード**: ブラウザで **`http://127.0.0.1:25581/`** を開くと、AIの思考テキスト・TTFT・TPS・キャッシュヒット率・スクショ・モデル切替をリアルタイムで確認できます。
 
 ---
 

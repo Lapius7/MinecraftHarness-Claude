@@ -1,5 +1,5 @@
 name: MinecraftHarness
-version: 0.1.0
+version: 0.1.1
 main: dev.minecraftharness.MinecraftHarnessPlugin
 api-version: '1.21'
 description: Real-time AI Minecraft building, VFX/SFX, and playable minigame harness powered by OpenClaw and Cerebras

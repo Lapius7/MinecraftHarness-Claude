@@ -37,10 +37,13 @@ if (-not (Test-Path $pluginsDir)) {
     New-Item -ItemType Directory -Force -Path $pluginsDir | Out-Null
 }
 
-$builtJar = Join-Path $root "plugin\build\libs\MinecraftHarness-0.1.0.jar"
-if (Test-Path $builtJar) {
-    Copy-Item -Path $builtJar -Destination (Join-Path $pluginsDir "MinecraftHarness-0.1.0.jar") -Force
-    Write-Host "Copied MinecraftHarness-0.1.0.jar to server/plugins/"
+$builtJar = Get-ChildItem -Path (Join-Path $root "plugin\build\libs") -Filter "MinecraftHarness-*.jar" -ErrorAction SilentlyContinue |
+    Sort-Object LastWriteTimeUtc -Descending | Select-Object -First 1
+if ($builtJar) {
+    Get-ChildItem -Path $pluginsDir -Filter "MinecraftHarness-*.jar" -ErrorAction SilentlyContinue |
+        Where-Object { $_.Name -ne $builtJar.Name } | Remove-Item -Force
+    Copy-Item -Path $builtJar.FullName -Destination (Join-Path $pluginsDir $builtJar.Name) -Force
+    Write-Host "Copied $($builtJar.Name) to server/plugins/"
 } else {
-    Write-Warning "Built plugin JAR not found at $builtJar. Build plugin/ first."
+    Write-Warning "Built plugin JAR not found in plugin/build/libs/. Build plugin/ first."
 }

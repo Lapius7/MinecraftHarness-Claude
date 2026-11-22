@@ -8,10 +8,14 @@ if (-not (Test-Path $paperJar)) {
     & "$PSScriptRoot\setup-server.ps1"
 }
 
-$builtJar = Join-Path $root "plugin\build\libs\MinecraftHarness-0.1.0.jar"
-$destJar = Join-Path $serverDir "plugins\MinecraftHarness-0.1.0.jar"
-if (Test-Path $builtJar) {
-    Copy-Item -Path $builtJar -Destination $destJar -Force
+$pluginsDir = Join-Path $serverDir "plugins"
+$builtJar = Get-ChildItem -Path (Join-Path $root "plugin\build\libs") -Filter "MinecraftHarness-*.jar" -ErrorAction SilentlyContinue |
+    Sort-Object LastWriteTimeUtc -Descending | Select-Object -First 1
+if ($builtJar) {
+    New-Item -ItemType Directory -Force -Path $pluginsDir | Out-Null
+    Get-ChildItem -Path $pluginsDir -Filter "MinecraftHarness-*.jar" -ErrorAction SilentlyContinue |
+        Where-Object { $_.Name -ne $builtJar.Name } | Remove-Item -Force
+    Copy-Item -Path $builtJar.FullName -Destination (Join-Path $pluginsDir $builtJar.Name) -Force
 }
 
 Set-Location $serverDir
