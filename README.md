@@ -101,7 +101,7 @@ Tab 補完には持っている権限で使えるものだけ出ます。
 | `api/claude-opus-5-5`、`api/claude-sonnet-5-5`、`api/claude-haiku-5-5`、`api/claude-fable-5-2` | Messages API（API キー） |
 | `cli/<任意のID>`、`api/<任意のID>` | 上の一覧に無いモデルを直接指定 |
 
-effort の値は、Claude CLI には `--effort`、API には `output_config.effort` として渡します。Anthropic の公式ドキュメントでは、組み込みの 4 つの API モデルが 5 段階すべてに対応しています。組み込み外のモデル ID で `xhigh` か `max` を選ぶと、対応を確認できないため警告が出ます。
+effort の値は Claude CLI には `--effort`、API には `output_config.effort` として渡します。Anthropic の公式ドキュメントでは、組み込みの 4 つの API モデルが 5 段階すべてに対応しています。組み込み外のモデル ID で `xhigh` か `max` を選ぶと、対応を確認できないため警告が出ます。
 
 ## 設定（`config.yml`）
 
