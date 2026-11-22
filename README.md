@@ -1,13 +1,38 @@
+<div align="center">
+
+<img src="assets/banner.svg" alt="MinecraftHarness-Claude" width="100%">
+
 # MinecraftHarness-Claude
 
-[![CI](https://github.com/Lapius7/MinecraftHarness-Claude/actions/workflows/ci.yml/badge.svg)](https://github.com/Lapius7/MinecraftHarness-Claude/actions/workflows/ci.yml)
+**チャットに一行書くだけで、Claude がマイクラの世界に建築とミニゲームを作る。**
+
+[![CI](https://img.shields.io/github/actions/workflow/status/Lapius7/MinecraftHarness-Claude/ci.yml?branch=main&label=CI&logo=github)](https://github.com/Lapius7/MinecraftHarness-Claude/actions/workflows/ci.yml)
+[![Release](https://img.shields.io/github/v/release/Lapius7/MinecraftHarness-Claude?include_prereleases&color=D97757)](https://github.com/Lapius7/MinecraftHarness-Claude/releases)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 ![Paper](https://img.shields.io/badge/Paper-1.21.x%20%7C%2026.x-3b82f6)
-![Java](https://img.shields.io/badge/Java-21%2B-orange)
+![Java](https://img.shields.io/badge/Java-21%2B-ED8B00?logo=openjdk&logoColor=white)
+![Claude](https://img.shields.io/badge/Claude-CLI%20%7C%20API-D97757)
+[![Stars](https://img.shields.io/github/stars/Lapius7/MinecraftHarness-Claude?style=flat&color=eab308)](https://github.com/Lapius7/MinecraftHarness-Claude/stargazers)
 
-チャットに一行書くだけで、Claude が見ている場所に建築物やコマンドブロックのミニゲームを作る PaperMC プラグインです。クライアント側の MOD は要りません。JAR を `plugins/` に 1 つ置けば動きます。
+**日本語** ・ [English summary](#english-summary)
 
-[ykundesu/MinecraftHarness](https://github.com/ykundesu/MinecraftHarness) をもとに、Claude 専用として作り直したフォークです。他の AI プロバイダーと外部ゲートウェイは取り除きました。
+</div>
+
+---
+
+## 概要
+
+Paper サーバーのプラグインです。`!屋根に煙突のある木の家を建てて` のように送ると、Claude が見ている場所を基準に建築物やコマンドブロックのミニゲームを作ります。クライアント側の MOD は要りません。JAR を `plugins/` に 1 つ置けば動きます。
+
+Claude への接続は 2 通りです。
+
+| 経路 | 仕組み |
+| --- | --- |
+| **サブスクリプション** | 公式の `claude` CLI を子プロセスとして呼びます。トークンには触りません |
+| **Anthropic API** | API キーで Messages API を直接呼びます（従量課金） |
+
+> [!NOTE]
+> [ykundesu/MinecraftHarness](https://github.com/ykundesu/MinecraftHarness)（MIT）をもとに、Claude 専用として作り直したフォークです。他の AI プロバイダーと外部ゲートウェイは取り除きました。元の作者に感謝します。
 
 ```text
 !屋根に煙突のある、庭つきの木の家を建てて
@@ -15,28 +40,32 @@
 !さっきの家を2ブロック下げて
 ```
 
+> [!WARNING]
+> まだ正式リリース前で、ゲーム内の動作の多くは実サーバーで確かめていません。確認できていない点は「[実機で未確認の点](#実機で未確認の点)」にまとめています。本番のワールドで使う前に、バックアップを取り、テスト用のワールドで試してください。
+
 ## 特長
 
-- 認証は 2 通りだけです。
-  - Claude のサブスクリプション: 公式の `claude` CLI を子プロセスとして呼びます。OAuth トークンには触りません。
-  - Anthropic API キー: Messages API を直接呼びます（ストリーミング、tool_use、プロンプトキャッシュ）。
-- JAR 1 つで完結します。 Node のブリッジも別プロセスも要りません。`claude` CLI を使う場合だけ、サーバー機に CLI が必要です。
-- 視線の先に建てます。 見ている場所を基準に建築し、`s1`、`s2` のように最近の建築物を覚えているので、後から直せます。
-- 応答の生成中から、届いた分のブロックを置き始めます（API モード）。
-- `/mh undo` で最後の建築を戻せます。
-- 録画向けに、Film モード、カメラ（orbit / dolly）、VFX / SFX があります。
+- 建築ツール一式: ブロックの一括設置、ファンクションパック、コマンドブロックの連鎖、ワールドの点検、写真撮影、演出（VFX / SFX）を Claude が自分で選んで使います。
+- セッションの使い回し: 1 プレイヤーにつき 1 セッションを保ち、直前の建築（`s1`、`s2` …）を覚えているので、後から直せます。
+- 順番待ちのキュー: 実行中に送った指示は順に処理します。`!now` で割り込み、`/mh stop` で止められます。
+- ボスバーの進捗表示: 待機、思考、ツール実行、建築中を送った人にだけ表示します。退出と再参加にも対応しています。
+- 自己点検（レビュー）ループ: 建てたあとに Claude 自身が出来を見直して直します。強さは `off` から `max` まで 5 段階です。
+- 意図の自動判定: 「続きの修正」「新しい建築」「点検の依頼」をモデルが発言から読み分けます。
+- ツール使用のチャット表示: ツールを使うたびに 1 行出し、同じツールの連続は折りたたみます。
+- 結果の詳細: 時間、トークン、置いたブロック、レビューの回数と判定を、1 行の要約と、重ねると見える内訳で出します。
+- 録画向けに Film モード、カメラ（orbit / dolly）、VFX / SFX があります。`/mh undo` で最後の建築を戻せます。
 
 ## 必要なもの
 
 | 項目 | 内容 |
 | --- | --- |
-| サーバー | Paper または Paper 系（1.21.x、26.x） |
+| サーバー | Paper または Paper 系（1.21.x、26.x）。Java Edition のみ |
 | Java | 21 以上（26.x は Paper の要件で 25 以上） |
 | 認証 | `claude` CLI にログイン済みのサブスクリプション、または Anthropic API キー |
 
 ## 導入
 
-1. [Releases](https://github.com/Lapius7/MinecraftHarness-Claude/releases) の `MinecraftHarness-<version>.jar` を、サーバーの `plugins/` に置きます。
+1. [Releases](https://github.com/Lapius7/MinecraftHarness-Claude/releases) の `MinecraftHarness-<version>.jar` を、サーバーの `plugins/` に置きます（Releases にまだ無い版は、下の「ビルド」で作れます）。
 2. サーバーを起動します。`plugins/MinecraftHarness/config.yml` ができます。
 3. 認証を選びます。
 
@@ -54,6 +83,9 @@ claude        # 初回のみ。ブラウザでログインする
 - ツールは `--tools ""` で CLI 標準のものをすべて無効にし、プラグインがローカル（`127.0.0.1`）で立てる MCP サーバーのツールだけを許可します。
 - 子プロセスの環境変数から `ANTHROPIC_API_KEY` と `ANTHROPIC_AUTH_TOKEN` を外すので、サブスクリプションの枠で動きます。
 
+> [!NOTE]
+> サブスクリプションの利用は、公式の `claude` CLI を起動するだけです。このプラグインは OAuth トークンを読まず、取り出さず、保存しません。子プロセスの環境変数から `ANTHROPIC_API_KEY` と `ANTHROPIC_AUTH_TOKEN` を外すので、API 課金には切り替わりません。利用条件は Anthropic の規約に従ってください。
+
 `claude` が `PATH` に無い場合は、`config.yml` の `claude.binary` か環境変数 `MH_CLAUDE_BIN` でパスを指定します。
 
 ### B. Anthropic API キー
@@ -65,7 +97,8 @@ mh key anthropic sk-ant-...
 mh model api/claude-opus-5-5
 ```
 
-> 注意: ゲーム内で `/mh key anthropic <キー>` を打つと、コマンドとしてサーバーの `latest.log` に残ります。コンソールから実行するか、環境変数 `ANTHROPIC_API_KEY`、または `plugins/MinecraftHarness/.env` を使ってください。
+> [!WARNING]
+> ゲーム内で `/mh key anthropic <キー>` を打つと、コマンドとしてサーバーの `latest.log` に残ります。コンソールから実行するか、環境変数 `ANTHROPIC_API_KEY`、または `plugins/MinecraftHarness/.env` を使ってください。
 
 キーの探索順は `config.yml`、環境変数 `ANTHROPIC_API_KEY`、`.env` です。
 
@@ -174,7 +207,7 @@ cd plugin
 
 ### レビュー(自己点検)
 
-建築が終わると、Claude 自身が既存のツール(`mc_voxel_snapshot`、`mc_take_photo`、ブロック確認)で出来を点検し、問題を直してもう一度見直します。点検項目は、依頼との一致、形と比率、窓と扉の穴、浮いたブロック、内装と庭、地形とのなじみ、コマンドブロックやミニゲームの動作です。
+建築が終わると、Claude 自身が既存のツール(`mc_take_photo`、`mc_inspect_world`)で出来を点検し、問題を直してもう一度見直します。点検項目は、依頼との一致、形と比率、窓と扉の穴、浮いたブロック、内装と庭、地形とのなじみ、コマンドブロックやミニゲームの動作です。
 
 | 強さ | 回数 | 時間 | トークン |
 |------|------|------|----------|
@@ -243,6 +276,30 @@ Claude は 1 つずつ処理するので、実行中に送った指示は順番�
 
 `claude.debugLog: true` にすると、CLI の起動、終了コード、標準出力の生の行、標準エラーを `plugins/MinecraftHarness/logs/cli-stream.log` に追記します。ファイルが 20 MB を超えると作り直します。
 
+## トラブルシューティング
+
+| 症状 | 確認すること |
+| --- | --- |
+| 「受付: 待機中」のまま進まない | `claude` が `PATH` にあるか（`claude --version`）。サーバーを動かすユーザーでログイン済みか。`claude.binary` か `MH_CLAUDE_BIN` でパスを指定できます |
+| 遅い・途中で止まる | `claude.debugLog: true` にして `logs/cli-stream.log` を見ます。`claude.idleTimeoutSeconds`（既定 300 秒）で CLI を止めます |
+| `/mh` が使えない | 権限 `minecraftharness.use` が必要です。初期設定では OP だけが持ちます |
+| モデルやキーを変えられない | `minecraftharness.admin` が必要です |
+| API キーが通らない | コンソールで `mh key anthropic <キー>` を実行し直します。キーの探索順は `config.yml`、環境変数、`.env` です |
+| 進捗が見えない | `/mh progress` の表示先と、Film モード（`/mh film off`）を確認します |
+| 26.x で起動しない | Java 25 以上が必要です |
+
+不具合は [Issues](https://github.com/Lapius7/MinecraftHarness-Claude/issues) へ。`cli-stream.log`（API キーが入っていないことを確認してから）と、使っている Paper のバージョンを添えてください。
+
+## English summary
+
+**MinecraftHarness-Claude** is a Paper plugin (Java Edition, Paper 1.21.x / 26.x, Java 21+) that lets players build structures and command-block minigames in Minecraft by chatting with Claude (`!build a wooden house with a chimney`). It ships as a single JAR with no external bridge.
+
+- **Two ways to connect**: your Claude subscription through the official `claude` CLI (run as a child process; OAuth tokens are never read or copied), or an Anthropic API key (Messages API).
+- **Features**: build tools, one reused session per player, a prompt queue, bossbar progress, a self-review loop (`off` to `max`), automatic intent detection (continue / new build / review), tool-use lines in chat, and a result summary.
+- **Install**: put the JAR in `plugins/`, start the server, then either log in to `claude` on the server machine or run `mh key anthropic <key>` from the console. Commands are under `/mh` (see the table above).
+- **Status**: pre-release. Unit tests and CI pass, but many in-game behaviors are not yet verified on a real server (see "実機で未確認の点").
+- **Origin and license**: a Claude-only fork of [ykundesu/MinecraftHarness](https://github.com/ykundesu/MinecraftHarness). MIT.
+
 ## 設計メモ
 
 - Node ブリッジは Java に移しました。 ストリーミング、ツールの往復、プロンプトキャッシュ、履歴の整合性（`tool_use` と `tool_result` の対応）はすべてプラグイン内にあります。
@@ -257,4 +314,4 @@ Claude は 1 つずつ処理するので、実行中に送った指示は順番�
 
 ## ライセンス
 
-MIT。元の著作権表示（MinecraftHarness Contributors）は [LICENSE](LICENSE) に残しています。元プロジェクト: [ykundesu/MinecraftHarness](https://github.com/ykundesu/MinecraftHarness)
+[MIT](LICENSE)。元プロジェクトの [ykundesu/MinecraftHarness](https://github.com/ykundesu/MinecraftHarness) も MIT で、元の著作権表示（MinecraftHarness Contributors）は [LICENSE](LICENSE) に残しています。
