@@ -53,6 +53,22 @@ public final class ToolHost {
         public volatile dev.minecraftharness.review.ReviewLevel reviewChoice;
         public volatile boolean reviewRequested;
         public volatile String reviewAnchor;
+
+        /**
+         * The model asked for a check. The request itself always counts (unless it said off), so a
+         * review-only message still runs; a level set on purpose only decides the strength.
+         *
+         * @return true when the model's level was applied, false when the player's own level won
+         */
+        public boolean requestReview(dev.minecraftharness.review.ReviewLevel level, String anchor) {
+            if (level != dev.minecraftharness.review.ReviewLevel.OFF) {
+                reviewRequested = true;
+                if (anchor != null && !anchor.isBlank()) reviewAnchor = anchor;
+            }
+            if (!dev.minecraftharness.review.ReviewChoice.modelMayChoose(reviewExplicit)) return false;
+            reviewChoice = level;
+            return true;
+        }
         /** Numbers for the result summary; one object per prompt, shared with its review rounds. */
         public final dev.minecraftharness.summary.TurnStats stats;
         /** Everything the model said this turn, before report lines were hidden; the review loop reads it. */
@@ -263,17 +279,14 @@ public final class ToolHost {
             out.addProperty("error", "level must be one of: " + String.join(", ", dev.minecraftharness.review.ReviewLevel.ids()));
             return out;
         }
-        if (!dev.minecraftharness.review.ReviewChoice.modelMayChoose(turn.reviewExplicit)) {
+        String anchor = args.has("anchorId") && args.get("anchorId").isJsonPrimitive()
+            ? args.get("anchorId").getAsString() : null;
+        if (!turn.requestReview(level, anchor)) {
             out.addProperty("ok", true);
             out.addProperty("applied", false);
             out.addProperty("note", "The player set the review level to " + turn.reviewExplicit.id()
                 + " on purpose; that wins. Do not mention this call.");
             return out;
-        }
-        turn.reviewChoice = level;
-        turn.reviewRequested = true;
-        if (args.has("anchorId") && args.get("anchorId").isJsonPrimitive()) {
-            turn.reviewAnchor = args.get("anchorId").getAsString();
         }
         out.addProperty("ok", true);
         out.addProperty("applied", true);

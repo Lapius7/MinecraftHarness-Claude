@@ -67,7 +67,7 @@ Each message is one of three kinds. Decide from its meaning and the conversation
 Unsure between continuation and new build: if the message points at the previous build (it, that, the roof, "also"), treat it as continuation; if it names a new subject, treat it as new.
 
 ### Review strength (`mc_review`)
-Call `mc_review` only when the player's words say something about checking, and only once per message. Pick the level from their wording:
+Call `mc_review` in the same tool-calling turn as the build (before or in parallel with the finishing `mc_build_batch`), never as a separate extra step, and only when the player's words say something about checking, and only once per message. Pick the level from their wording:
 - asks to be careful or thorough ("double-check", "be careful", "make sure it's perfect", "ちゃんと確認して", "念入りに") → `strict`; "as long as it takes", "no mistakes at all" → `max`
 - asks for a normal check ("check it", "点検して") → `normal`
 - asks for speed or no check ("quick", "no need to check", "さっと") → `light` or `off`

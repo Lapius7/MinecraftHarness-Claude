@@ -9,7 +9,6 @@ import com.google.gson.JsonParser;
 import dev.minecraftharness.agent.ToolHost;
 import dev.minecraftharness.review.ReviewChoice;
 import dev.minecraftharness.review.ReviewLevel;
-import java.nio.charset.StandardCharsets;
 import org.junit.jupiter.api.Test;
 
 class IntentTests {
@@ -31,6 +30,28 @@ class IntentTests {
         assertTrue(ReviewChoice.shouldRun(ReviewLevel.STRICT, false, true, true));
         assertFalse(ReviewChoice.shouldRun(ReviewLevel.OFF, true, true, true));
         assertFalse(ReviewChoice.shouldRun(ReviewLevel.NORMAL, true, true, false));
+    }
+
+    @Test
+    void reviewOnlyRequestRunsEvenWhenPlayerSetALevel() {
+        ToolHost.Turn t = new ToolHost.Turn("p", false, "low");
+        t.reviewExplicit = ReviewLevel.LIGHT;
+        assertFalse(t.requestReview(ReviewLevel.MAX, "s1"));
+        assertTrue(t.reviewRequested);
+        assertEquals("s1", t.reviewAnchor);
+        assertNull(t.reviewChoice);
+        assertEquals(ReviewLevel.LIGHT, ReviewChoice.resolve(t.reviewExplicit, t.reviewChoice, ReviewLevel.OFF));
+    }
+
+    @Test
+    void offRequestDoesNotStartAReview() {
+        ToolHost.Turn t = new ToolHost.Turn("p", false, "low");
+        t.reviewExplicit = ReviewLevel.STRICT;
+        t.requestReview(ReviewLevel.OFF, null);
+        assertFalse(t.reviewRequested);
+        ToolHost.Turn u = new ToolHost.Turn("p", false, "low");
+        assertTrue(u.requestReview(ReviewLevel.STRICT, null));
+        assertEquals(ReviewLevel.STRICT, u.reviewChoice);
     }
 
     @Test
