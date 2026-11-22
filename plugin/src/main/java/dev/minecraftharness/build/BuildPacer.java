@@ -35,7 +35,7 @@ import java.util.function.Consumer;
 /**
  * Adaptive Inter-Batch Pacing Engine.
  * Smoothly paces incoming block batches across ~90% of the predicted time until the next
- * OpenClaw/Cerebras batch arrives, eliminating pauses between LLM turns.
+ * model batch arrives, eliminating pauses between LLM turns.
  */
 public final class BuildPacer {
 

@@ -3,7 +3,8 @@ package dev.minecraftharness;
 import com.google.gson.Gson;
 import com.google.gson.JsonArray;
 import com.google.gson.JsonObject;
-import dev.minecraftharness.agent.StandaloneAgent;
+import dev.minecraftharness.agent.HarnessAgent;
+import dev.minecraftharness.agent.ModelCatalog;
 import dev.minecraftharness.build.BuildPacer;
 import dev.minecraftharness.build.PrimitiveExpander;
 import dev.minecraftharness.build.TerrainSnapshotManager;
@@ -17,7 +18,6 @@ import dev.minecraftharness.fx.CameraRig;
 import dev.minecraftharness.fx.MarkdownChatRenderer;
 import dev.minecraftharness.fx.TelemetryHud;
 import dev.minecraftharness.fx.VfxEngine;
-import dev.minecraftharness.ws.HarnessWebSocketServer;
 import io.papermc.paper.event.player.AsyncChatEvent;
 import net.kyori.adventure.text.Component;
 import net.kyori.adventure.text.event.ClickEvent;
@@ -66,47 +66,17 @@ public final class MinecraftHarnessPlugin extends JavaPlugin implements Listener
     private CommandWirer commandWirer;
     private CameraRig cameraRig;
     private TelemetryHud telemetryHud;
-    private HarnessWebSocketServer wsServer;
-    private StandaloneAgent standaloneAgent;
+    private HarnessAgent agent;
 
-    private record ModelEntry(String ref, String provider, String modelId, String name, String apiKeyEnv, boolean hasApiKey) {}
+    private static final String PERM_USE = "minecraftharness.use";
+    private static final String PERM_ADMIN = "minecraftharness.admin";
 
     private String reasoningMode = "low";
-    private String bridgeAgentMode = "none";
-    private String activeModelRef = "cerebras/moonshotai-kimi-k3.1-pro-trial";
-    private final List<ModelEntry> availableModels = new ArrayList<>();
-
-    private boolean isBridgeConnected() {
-        return wsServer != null && wsServer.getConnectedClientCount() > 0;
-    }
-
-    private String activeRuntimeLabel() {
-        if (isBridgeConnected()) {
-            return "openclaw".equalsIgnoreCase(bridgeAgentMode) ? "OpenClaw" : "Direct AI";
-        }
-        return "AI";
-    }
-
-    private String activeRuntimeDescription() {
-        if (isBridgeConnected()) {
-            return "openclaw".equalsIgnoreCase(bridgeAgentMode) ? "OpenClaw (Bridge)" : "Direct AI (Bridge)";
-        }
-        return standaloneAgent != null && standaloneAgent.isEnabled() ? "Standalone (Embedded JAR)" : "Disconnected";
-    }
-
-    private void refreshStandaloneModels() {
-        if (standaloneAgent == null) return;
-        activeModelRef = standaloneAgent.getActiveModelRef();
-        availableModels.clear();
-        for (StandaloneAgent.StandaloneModel m : standaloneAgent.listModels()) {
-            availableModels.add(new ModelEntry(m.ref(), m.provider(), m.modelId(), m.name(), m.apiKeyEnv(), m.hasApiKey()));
-        }
-    }
 
     @Override
     public void onEnable() {
         saveDefaultConfig();
-        reasoningMode = getConfig().getString("reasoning", "low");
+        reasoningMode = normalizeReasoning(getConfig().getString("reasoning", "low"));
         this.contextProvider = new SpatialContextProvider();
         this.snapshotManager = new TerrainSnapshotManager();
         this.expander = new PrimitiveExpander(contextProvider);
@@ -115,31 +85,17 @@ public final class MinecraftHarnessPlugin extends JavaPlugin implements Listener
         this.commandWirer = new CommandWirer(contextProvider, snapshotManager, vfxEngine);
         this.cameraRig = new CameraRig();
         this.telemetryHud = new TelemetryHud();
-        this.standaloneAgent = new StandaloneAgent(this, this::handleSyncWsAction);
-        refreshStandaloneModels();
+        this.agent = new HarnessAgent(this, this::handleSyncWsAction);
 
         getLogger().info("Brigadier validator status: " + commandWirer.getBrigadierStatus());
 
         this.buildPacer.setOnBuildCompleteCallback(summary -> {
-            if (wsServer != null) {
-                wsServer.broadcastEvent("build_complete", summary);
-            }
             if (!cameraRig.isFilmMode()) {
                 int placed = summary.get("placed").getAsInt();
                 long ms = summary.get("durationMs").getAsLong();
                 broadcastStatus("§b⚡ Complete! §f" + placed + " blocks in " + String.format(Locale.US, "%.1fs", ms / 1000.0));
             }
         });
-
-        int wsPort = Integer.parseInt(System.getProperty("mh.ws.port", "25580"));
-        this.wsServer = new HarnessWebSocketServer(this, "127.0.0.1", wsPort, this::handleSyncWsAction);
-        this.wsServer.setOnDisconnectCallback(() -> {
-            if (!isBridgeConnected()) {
-                bridgeAgentMode = "none";
-                refreshStandaloneModels();
-            }
-        });
-        this.wsServer.start();
 
         var cmd = getCommand("mh");
         if (cmd != null) {
@@ -156,23 +112,16 @@ public final class MinecraftHarnessPlugin extends JavaPlugin implements Listener
             telemetryHud.tick(cameraRig.isFilmMode());
         }, 1L, 1L);
 
-        getLogger().info("MinecraftHarness enabled cleanly on ws://127.0.0.1:" + wsPort);
+        getLogger().info("MinecraftHarness enabled. Active model: " + agent.activeModel().ref());
     }
 
     @Override
     public void onDisable() {
-        if (standaloneAgent != null) standaloneAgent.shutdown();
+        if (agent != null) agent.shutdown();
         if (buildPacer != null) buildPacer.stopNow();
         if (vfxEngine != null) vfxEngine.cleanupAll();
         if (cameraRig != null) cameraRig.stopAll();
         if (telemetryHud != null) telemetryHud.cleanup();
-        if (wsServer != null) {
-            try {
-                wsServer.stop(1000);
-            } catch (InterruptedException ignored) {
-                Thread.currentThread().interrupt();
-            }
-        }
     }
 
     @EventHandler(priority = EventPriority.HIGHEST, ignoreCancelled = true)
@@ -213,40 +162,36 @@ public final class MinecraftHarnessPlugin extends JavaPlugin implements Listener
     }
 
     private void dispatchPrompt(Player player, String prompt) {
-        boolean bridgeUp = isBridgeConnected();
-        if (!bridgeUp && (standaloneAgent == null || !standaloneAgent.isEnabled())) {
-            player.sendMessage(Component.text("Bridge is not connected on ws://127.0.0.1:25580 and standalone mode is disabled.", NamedTextColor.RED));
+        String convo = agent.handleConversationCommand(player.getName(), prompt);
+        if (convo != null) {
+            player.sendMessage(Component.text(convo, NamedTextColor.AQUA));
             return;
         }
 
         BuildAnchor anchor = contextProvider.captureAnchor(player.getName());
-        String runtimeLbl = activeRuntimeLabel();
-
+        ModelCatalog.Model model = agent.activeModel();
         if (cameraRig.isFilmMode()) {
             player.sendActionBar(Component.text("⚡ " + prompt, NamedTextColor.AQUA));
         } else {
-            player.sendMessage(Component.text("⚡ " + runtimeLbl + " (" + reasoningMode + "): ", NamedTextColor.AQUA)
+            player.sendMessage(Component.text("⚡ " + model.ref() + " (" + reasoningMode + "): ", NamedTextColor.AQUA)
                 .append(Component.text(prompt, NamedTextColor.WHITE)));
         }
+        agent.enqueuePrompt(player.getName(), prompt, cameraRig.isFilmMode(), reasoningMode, anchor);
+    }
 
-        if (bridgeUp) {
-            JsonObject payload = new JsonObject();
-            payload.addProperty("playerName", player.getName());
-            payload.addProperty("prompt", prompt);
-            payload.addProperty("filmMode", cameraRig.isFilmMode());
-            payload.addProperty("reasoning", reasoningMode);
-            payload.add("promptAnchor", new Gson().toJsonTree(anchor));
-            wsServer.broadcastEvent("player_prompt", payload);
-        } else {
-            standaloneAgent.enqueuePrompt(player.getName(), prompt, cameraRig.isFilmMode(), reasoningMode, anchor);
-        }
+    /** Older configs used off/minimal; both mean the lowest effort now. */
+    static String normalizeReasoning(String level) {
+        if (level == null) return "low";
+        String l = level.toLowerCase(Locale.ROOT).trim();
+        return ModelCatalog.effortLevels().contains(l) ? l : "low";
     }
 
     private void setReasoningMode(String level) {
-        if (!List.of("off", "minimal", "low", "medium", "high").contains(level)) throw new IllegalArgumentException("Unknown effort level");
-        getConfig().set("reasoning", level);
+        String l = level == null ? "" : level.toLowerCase(Locale.ROOT).trim();
+        if (!ModelCatalog.effortLevels().contains(l)) throw new IllegalArgumentException("Unknown effort level");
+        getConfig().set("reasoning", l);
         saveConfig();
-        reasoningMode = level;
+        reasoningMode = l;
     }
 
     private JsonObject handleSyncWsAction(String action, JsonObject params) {
@@ -255,13 +200,6 @@ public final class MinecraftHarnessPlugin extends JavaPlugin implements Listener
             : null;
 
         return switch (action) {
-            case "get_reasoning", "set_reasoning" -> {
-                if (action.equals("set_reasoning")) setReasoningMode(params.get("level").getAsString());
-                JsonObject result = new JsonObject();
-                result.addProperty("level", reasoningMode);
-                result.addProperty("ok", true);
-                yield result;
-            }
             case "begin_prompt" -> {
                 BuildAnchor chosen = null;
                 if (params.has("preserveAnchorId") && params.get("preserveAnchorId").isJsonPrimitive()) {
@@ -318,7 +256,7 @@ public final class MinecraftHarnessPlugin extends JavaPlugin implements Listener
             case "notify_status" -> {
                 String msg = params.has("message") ? params.get("message").getAsString() : "";
                 if (!cameraRig.isFilmMode() && !msg.isBlank()) {
-                    Component rendered = MarkdownChatRenderer.render("[" + activeRuntimeLabel() + "] ", msg);
+                    Component rendered = MarkdownChatRenderer.render("[Claude] ", msg);
                     Player recipient = (playerName != null && !playerName.isBlank()) ? Bukkit.getPlayerExact(playerName) : null;
                     if (recipient != null) {
                         recipient.sendMessage(rendered);
@@ -345,33 +283,6 @@ public final class MinecraftHarnessPlugin extends JavaPlugin implements Listener
                 telemetryHud.update(params, cameraRig.isFilmMode());
                 JsonObject r = new JsonObject();
                 r.addProperty("ok", true);
-                yield r;
-            }
-            case "sync_models" -> {
-                if (params.has("agentMode") && params.get("agentMode").isJsonPrimitive()) {
-                    bridgeAgentMode = params.get("agentMode").getAsString();
-                }
-                if (params.has("active") && params.get("active").isJsonPrimitive()) {
-                    activeModelRef = params.get("active").getAsString();
-                }
-                if (params.has("models") && params.get("models").isJsonArray()) {
-                    availableModels.clear();
-                    for (var el : params.getAsJsonArray("models")) {
-                        if (!el.isJsonObject()) continue;
-                        JsonObject m = el.getAsJsonObject();
-                        String ref = m.has("ref") && m.get("ref").isJsonPrimitive() ? m.get("ref").getAsString() : "";
-                        if (ref.isBlank()) continue;
-                        String provider = m.has("provider") && m.get("provider").isJsonPrimitive() ? m.get("provider").getAsString() : "";
-                        String modelId = m.has("modelId") && m.get("modelId").isJsonPrimitive() ? m.get("modelId").getAsString() : "";
-                        String name = m.has("name") && m.get("name").isJsonPrimitive() ? m.get("name").getAsString() : ref;
-                        String apiKeyEnv = m.has("apiKeyEnv") && m.get("apiKeyEnv").isJsonPrimitive() ? m.get("apiKeyEnv").getAsString() : "";
-                        boolean hasApiKey = m.has("hasApiKey") && m.get("hasApiKey").isJsonPrimitive() && m.get("hasApiKey").getAsBoolean();
-                        availableModels.add(new ModelEntry(ref, provider, modelId, name, apiKeyEnv, hasApiKey));
-                    }
-                }
-                JsonObject r = new JsonObject();
-                r.addProperty("ok", true);
-                r.addProperty("count", availableModels.size());
                 yield r;
             }
             case "camera_snap" -> handleCameraSnap(params, playerName);
@@ -683,7 +594,7 @@ public final class MinecraftHarnessPlugin extends JavaPlugin implements Listener
     @Override
     public boolean onCommand(CommandSender sender, Command command, String label, String[] args) {
         if (args.length == 0) {
-            sender.sendMessage("§bMinecraftHarness §7| Use §f!<prompt>§7 or §f/mh <prompt|undo|reset|film|cam|fx|reasoning|stop|status>");
+            sender.sendMessage("§bMinecraftHarness §7| §f!<プロンプト>§7 または §f/mh <プロンプト|model|key|undo|reset|shift|film|cam|fx|reasoning|claude|stop|status>");
             return true;
         }
 
@@ -694,11 +605,12 @@ public final class MinecraftHarnessPlugin extends JavaPlugin implements Listener
                 sender.sendMessage("§aUndid last build (§f" + r.get("restoredBlocks").getAsInt() + " blocks restored§a).");
             }
             case "reset" -> {
+                if (!requireAdmin(sender)) return true;
                 JsonObject r = performReset();
                 sender.sendMessage("§aReset all session builds (§f" + r.get("restoredBlocks").getAsInt() + " blocks restored§a).");
             }
             case "stop" -> {
-                if (standaloneAgent != null) standaloneAgent.cancelActive();
+                agent.cancelActive();
                 buildPacer.stopNow();
                 sender.sendMessage("§eStopped active AI run, build queue, and VFX.");
             }
@@ -755,116 +667,78 @@ public final class MinecraftHarnessPlugin extends JavaPlugin implements Listener
             }
             case "reasoning", "effort" -> {
                 if (args.length < 2) {
-                    sender.sendMessage("§bCurrent reasoning_effort: §f" + reasoningMode);
+                    sender.sendMessage("§b現在の思考レベル: §f" + reasoningMode + " §7(" + String.join(" | ", ModelCatalog.effortLevels()) + ")");
                     return true;
                 }
+                if (!requireAdmin(sender)) return true;
                 String lvl = args[1].toLowerCase(Locale.ROOT);
-                if (!List.of("off", "minimal", "low", "medium", "high").contains(lvl)) {
-                    sender.sendMessage("§cValid levels: off, minimal, low, medium, high");
+                if (!ModelCatalog.effortLevels().contains(lvl)) {
+                    sender.sendMessage("§c指定できるレベル: " + String.join(", ", ModelCatalog.effortLevels()));
                     return true;
                 }
                 setReasoningMode(lvl);
-                JsonObject ev = new JsonObject();
-                ev.addProperty("command", "reasoning");
-                ev.addProperty("value", lvl);
-                wsServer.broadcastEvent("player_command", ev);
-                sender.sendMessage("§b" + activeRuntimeLabel() + " thinking level set to: §f" + lvl);
+                sender.sendMessage("§b思考レベルを §f" + lvl + "§b にしました。");
             }
             case "key" -> {
+                if (!requireAdmin(sender)) return true;
+                if (args.length < 2 || !"anthropic".equalsIgnoreCase(args[1])) {
+                    sender.sendMessage("§b使い方: §f/mh key anthropic <APIキー> §7(消すには /mh key anthropic clear)");
+                    sender.sendMessage("§7現在のキー: §f" + agent.maskedApiKey());
+                    return true;
+                }
                 if (args.length < 3) {
-                    sender.sendMessage("§bUsage: §f/mh key <cerebras|opendesign|opencode-go|openrouter|commandcode> <APIキー>");
+                    sender.sendMessage("§7現在のキー: §f" + agent.maskedApiKey());
                     return true;
                 }
-                if (standaloneAgent == null) {
-                    sender.sendMessage("§cStandalone agent is not initialized.");
-                    return true;
-                }
-                String prov = args[1].trim();
                 String apiKey = String.join(" ", java.util.Arrays.copyOfRange(args, 2, args.length)).trim();
-                String savedProv = standaloneAgent.setProviderApiKey(prov, apiKey);
-                if (savedProv == null) {
-                    sender.sendMessage("§cUnknown provider: " + prov + " (valid: cerebras, opendesign, opencode-go, openrouter, commandcode)");
+                if (apiKey.equalsIgnoreCase("clear")) {
+                    agent.setApiKey("");
+                    sender.sendMessage("§aAPIキーを消しました。");
                     return true;
                 }
-                if (!isBridgeConnected()) {
-                    refreshStandaloneModels();
+                agent.setApiKey(apiKey);
+                sender.sendMessage("§aAnthropic APIキーを保存しました (§f" + HarnessAgent.maskKey(apiKey) + "§a)。APIで使うには §f/mh model api/claude-opus-5-5§a を選びます。");
+                if (sender instanceof Player) {
+                    sender.sendMessage("§eこのコマンドはサーバーのログに残ります。次からはコンソールで §fmh key anthropic <キー>§e を実行してください。");
                 }
-                sender.sendMessage("§aSaved API key for §f" + savedProv + "§a (" + StandaloneAgent.maskKey(apiKey) + ") to plugins/MinecraftHarness/config.yml");
             }
-            case "model" -> {
-                boolean bridgeUp = isBridgeConnected();
-                if (!bridgeUp) {
-                    refreshStandaloneModels();
-                }
-                if (args.length < 2) {
-                    sender.sendMessage(Component.text("=== AI Models [" + activeRuntimeDescription() + "] (クリックで切替) ===", NamedTextColor.AQUA));
-                    sender.sendMessage(Component.text("Active: ", NamedTextColor.GRAY)
-                        .append(Component.text(activeModelRef, NamedTextColor.GREEN, TextDecoration.BOLD)));
-                    if (availableModels.isEmpty()) {
-                        sender.sendMessage(Component.text("Use /mh model <cerebras|opendesign|opencode-go|openrouter|commandcode>", NamedTextColor.GRAY));
-                        if (bridgeUp) {
-                            JsonObject ev = new JsonObject();
-                            ev.addProperty("command", "model");
-                            ev.addProperty("value", "");
-                            wsServer.broadcastEvent("player_command", ev);
-                        }
+            case "claude" -> {
+                if (args.length >= 2 && "clear".equalsIgnoreCase(args[1])) {
+                    if (!(sender instanceof Player p)) {
+                        sender.sendMessage("プレイヤーだけが使えます。");
                         return true;
                     }
-                    for (ModelEntry m : availableModels) {
-                        boolean isActive = m.ref().equals(activeModelRef);
-                        Component btn = Component.text(isActive ? " [●使用中] " : " [切替] ", isActive ? NamedTextColor.GREEN : NamedTextColor.GOLD)
-                            .clickEvent(ClickEvent.runCommand("/mh model " + m.ref()))
-                            .hoverEvent(HoverEvent.showText(Component.text("クリックで " + m.ref() + " に切替", NamedTextColor.AQUA)));
-                        Component line = btn
-                            .append(Component.text(m.ref(), isActive ? NamedTextColor.WHITE : NamedTextColor.AQUA))
-                            .append(Component.text(" — " + m.name(), NamedTextColor.GRAY));
-                        if (!m.hasApiKey() && !m.apiKeyEnv().isBlank()) {
-                            String hint = bridgeUp ? "要:" + m.apiKeyEnv() : "要:/mh key " + m.provider();
-                            line = line.append(Component.text(" [" + hint + "]", NamedTextColor.YELLOW));
-                        }
-                        sender.sendMessage(line);
-                    }
-                    sender.sendMessage(Component.text("任意モデル指定例: /mh model openrouter/<model-id> または /mh model opencode-go/<model-id>", NamedTextColor.DARK_GRAY));
+                    agent.clearSession(p.getName());
+                    sender.sendMessage("§a会話を破棄しました。次の依頼は新しいセッションで始まります。");
+                } else {
+                    sender.sendMessage("§b使い方: §f/mh claude clear §7(会話を破棄) ｜ §f!new §7も同じ");
+                }
+            }
+            case "model" -> {
+                if (args.length < 2) {
+                    showModelMenu(sender);
                     return true;
                 }
+                if (!requireAdmin(sender)) return true;
                 String target = String.join(" ", java.util.Arrays.copyOfRange(args, 1, args.length)).trim();
-                if (bridgeUp) {
-                    JsonObject ev = new JsonObject();
-                    ev.addProperty("command", "model");
-                    ev.addProperty("value", target);
-                    if (sender instanceof Player pl) {
-                        ev.addProperty("playerName", pl.getName());
-                    }
-                    wsServer.broadcastEvent("player_command", ev);
-                } else if (standaloneAgent != null) {
-                    StandaloneAgent.SelectResult res = standaloneAgent.selectModel(target);
-                    if (res.ok()) {
-                        refreshStandaloneModels();
-                        String msg = res.warning() != null
-                            ? "§aモデルを §f" + res.active() + "§a に切り替えました。（§e注意: " + res.warning() + "§a）"
-                            : "§aモデルを §f" + res.active() + " (" + res.selected().name() + ")§a に切り替えました！";
-                        sender.sendMessage(msg);
-                    } else {
-                        sender.sendMessage("§cモデル切替失敗: " + res.error());
-                    }
+                java.util.Optional<ModelCatalog.Model> chosen = agent.setActiveModel(target);
+                if (chosen.isEmpty()) {
+                    sender.sendMessage("§cモデルが見つかりません: §f" + target + " §7(例: cli/opus, api/claude-opus-5-5)");
+                    return true;
+                }
+                ModelCatalog.Model m = chosen.get();
+                sender.sendMessage("§aモデルを §f" + m.ref() + " (" + m.label() + ")§a に切り替えました。");
+                if (m.backend() == ModelCatalog.Backend.API && !agent.hasApiKey()) {
+                    sender.sendMessage("§eAPIキーが未設定です。コンソールで §fmh key anthropic <キー>§e を実行してください。");
                 }
             }
             case "status" -> {
-                if (!isBridgeConnected()) {
-                    refreshStandaloneModels();
-                }
                 sender.sendMessage("§b=== MinecraftHarness Status ===");
-                sender.sendMessage("§7Runtime: §f" + activeRuntimeDescription() + " §7(Bridge WS: §f" + wsServer.getConnectedClientCount() + "§7)");
-                sender.sendMessage("§7Active model: §f" + activeModelRef);
+                sender.sendMessage("§7モデル: §f" + agent.statusLine());
                 sender.sendMessage("§7Brigadier: §f" + commandWirer.getBrigadierStatus());
-                sender.sendMessage("§7Thinking level: §f" + reasoningMode + " §7| Build speed: §f" + buildPacer.getSpeedMode());
+                sender.sendMessage("§7思考レベル: §f" + reasoningMode + " §7| 建築速度: §f" + buildPacer.getSpeedMode());
                 sender.sendMessage("§bFilm Mode: §f" + cameraRig.isFilmMode() + " §7| HUD: §f" + telemetryHud.isHudEnabled() + " §7| VFX: §f" + vfxEngine.isFxEnabled() + " §7| SFX: §f" + vfxEngine.isSoundEnabled());
-                if (isBridgeConnected()) {
-                    sender.sendMessage("§7Telemetry Web UI: §bhttp://127.0.0.1:25581/");
-                } else {
-                    sender.sendMessage("§7Standalone config: §fplugins/MinecraftHarness/config.yml §7(set key via §f/mh key <provider> <key>§7)");
-                }
-                sender.sendMessage("§7Active queue: §f" + buildPacer.getRemainingCount() + " blocks remaining");
+                sender.sendMessage("§7残りブロック: §f" + buildPacer.getRemainingCount());
             }
             case "speed" -> {
                 if (args.length < 2) {
@@ -939,39 +813,73 @@ public final class MinecraftHarnessPlugin extends JavaPlugin implements Listener
 
     @Override
     public List<String> onTabComplete(CommandSender sender, Command command, String alias, String[] args) {
+        boolean admin = sender.hasPermission(PERM_ADMIN);
         if (args.length == 1) {
-            return List.of("model", "key", "undo", "reset", "shift", "film", "hud", "cam", "fx", "speed", "reasoning", "effort", "session", "history", "new", "stop", "status");
+            List<String> subs = new ArrayList<>(List.of("model", "undo", "shift", "film", "hud", "cam", "fx", "speed",
+                "session", "history", "new", "claude", "stop", "status"));
+            if (admin) subs.addAll(List.of("key", "reset", "reasoning"));
+            return filterPrefix(subs, args[0]);
         }
         if (args.length == 2) {
-            return switch (args[0].toLowerCase(Locale.ROOT)) {
-                case "key" -> List.of("cerebras", "opendesign", "opencode-go", "openrouter", "commandcode");
-                case "model" -> {
-                    List<String> suggestions = new ArrayList<>();
-                    java.util.LinkedHashSet<String> seen = new java.util.LinkedHashSet<>();
-                    for (ModelEntry m : availableModels) {
-                        if (!m.provider().isBlank() && seen.add(m.provider())) suggestions.add(m.provider());
-                        if (seen.add(m.ref())) suggestions.add(m.ref());
-                    }
-                    if (suggestions.isEmpty()) {
-                        suggestions.addAll(List.of("cerebras", "opendesign", "opencode-go", "openrouter", "commandcode"));
-                    }
-                    String prefix = args[1].toLowerCase(Locale.ROOT);
-                    yield suggestions.stream().filter(s -> s.toLowerCase(Locale.ROOT).startsWith(prefix)).toList();
-                }
+            return filterPrefix(switch (args[0].toLowerCase(Locale.ROOT)) {
+                case "key" -> admin ? List.of("anthropic") : List.<String>of();
+                case "model" -> admin ? ModelCatalog.refs() : List.<String>of();
+                case "claude" -> List.of("clear");
                 case "film", "fx" -> List.of("on", "off", "sound");
                 case "hud" -> List.of("on", "off", "reasoning");
                 case "cam" -> List.of("orbit", "dolly", "off");
                 case "history" -> List.of("reset");
                 case "session" -> List.of("list", "use");
                 case "speed" -> List.of("turbo", "fast", "cinematic");
-                case "reasoning", "effort" -> List.of("off", "minimal", "low", "medium", "high");
-                default -> List.of();
-            };
+                case "reasoning", "effort" -> admin ? ModelCatalog.effortLevels() : List.<String>of();
+                default -> List.<String>of();
+            }, args[1]);
         }
         if (args.length == 3 && "hud".equalsIgnoreCase(args[0]) && "reasoning".equalsIgnoreCase(args[1])) {
-            return List.of("on", "off");
+            return filterPrefix(List.of("on", "off"), args[2]);
         }
         return List.of();
+    }
+
+    private static List<String> filterPrefix(List<String> options, String typed) {
+        String prefix = typed.toLowerCase(Locale.ROOT);
+        return options.stream().filter(o -> o.toLowerCase(Locale.ROOT).startsWith(prefix)).toList();
+    }
+
+    private boolean requireAdmin(CommandSender sender) {
+        if (sender.hasPermission(PERM_ADMIN)) return true;
+        sender.sendMessage("§cこの操作には " + PERM_ADMIN + " 権限が必要です。");
+        return false;
+    }
+
+    private void showModelMenu(CommandSender sender) {
+        ModelCatalog.Model active = agent.activeModel();
+        boolean admin = sender.hasPermission(PERM_ADMIN);
+        sender.sendMessage(Component.text("=== モデル" + (admin ? " (クリックで切替)" : "") + " ===", NamedTextColor.AQUA));
+        sender.sendMessage(Component.text("使用中: ", NamedTextColor.GRAY)
+            .append(Component.text(active.ref(), NamedTextColor.GREEN, TextDecoration.BOLD)));
+        ModelCatalog.Backend last = null;
+        for (ModelCatalog.Model m : ModelCatalog.all()) {
+            if (m.backend() != last) {
+                last = m.backend();
+                sender.sendMessage(Component.text(m.backend() == ModelCatalog.Backend.CLI
+                    ? "── claude CLI（サブスクリプション）" : "── Anthropic API（APIキー）", NamedTextColor.DARK_AQUA));
+            }
+            boolean isActive = m.ref().equals(active.ref());
+            Component btn = Component.text(isActive ? " [●使用中] " : " [切替] ", isActive ? NamedTextColor.GREEN : NamedTextColor.GOLD);
+            if (admin && !isActive) {
+                btn = btn.clickEvent(ClickEvent.runCommand("/mh model " + m.ref()))
+                    .hoverEvent(HoverEvent.showText(Component.text("クリックで " + m.ref() + " に切替", NamedTextColor.AQUA)));
+            }
+            Component line = btn
+                .append(Component.text(m.ref(), isActive ? NamedTextColor.WHITE : NamedTextColor.AQUA))
+                .append(Component.text(" — " + m.label(), NamedTextColor.GRAY));
+            if (m.backend() == ModelCatalog.Backend.API && !agent.hasApiKey()) {
+                line = line.append(Component.text(" [APIキー未設定]", NamedTextColor.YELLOW));
+            }
+            sender.sendMessage(line);
+        }
+        sender.sendMessage(Component.text("任意のモデルID: /mh model api/<モデルID> または cli/<モデルID>", NamedTextColor.DARK_GRAY));
     }
 
     private JsonObject handleCameraSnap(JsonObject params, String playerName) {

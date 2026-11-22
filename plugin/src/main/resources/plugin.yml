@@ -1,16 +1,17 @@
 name: MinecraftHarness
-version: 0.1.2
+version: 0.2.0
 main: dev.minecraftharness.MinecraftHarnessPlugin
 api-version: '1.21'
-description: Real-time AI Minecraft building, VFX/SFX, and playable minigame harness powered by OpenClaw and Cerebras
-libraries:
-  - org.java-websocket:Java-WebSocket:1.5.7
+description: Build in Minecraft by chatting with Claude. Runs on your Claude subscription (claude CLI) or an Anthropic API key.
 commands:
   mh:
-    description: Control MinecraftHarness AI builder, telemetry HUD, film mode, camera rig, and undo/reset
-    usage: /mh <prompt|model|key|undo|reset|shift|film|hud|cam|fx|speed|status|stop|reasoning>
+    description: Claude-powered builder, model switch, undo/reset, film mode, camera rig
+    usage: /mh <prompt|model|key|undo|reset|shift|film|hud|cam|fx|speed|status|stop|reasoning|claude>
     permission: minecraftharness.use
 permissions:
   minecraftharness.use:
-    description: Allows using MinecraftHarness commands and ! chat prompts
+    description: Send prompts (/mh <prompt>, !<prompt>) and use undo, shift, film, camera and status
+    default: op
+  minecraftharness.admin:
+    description: Switch model, set the API key, change reasoning level, reset all builds
     default: op
