@@ -1,0 +1,48 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Build and test (Paper 1.21.4 API, JDK 21)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '21'
+          cache: gradle
+          cache-dependency-path: plugin/build.gradle.kts
+      - name: Build and test
+        working-directory: plugin
+        run: |
+          chmod +x gradlew
+          ./gradlew build --no-daemon
+      - uses: actions/upload-artifact@v4
+        with:
+          name: MinecraftHarness-jar
+          path: plugin/build/libs/MinecraftHarness-*.jar
+
+  paper-26:
+    name: Compile against Paper 26.x API (JDK 25)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '25'
+          cache: gradle
+          cache-dependency-path: plugin/build.gradle.kts
+      - name: Compile and test with the 26.3 API
+        working-directory: plugin
+        run: |
+          chmod +x gradlew
+          ./gradlew build --no-daemon -PpaperApi=26.3.build.258-stable
