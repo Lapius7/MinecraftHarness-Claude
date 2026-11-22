@@ -1,221 +1,150 @@
-# MinecraftHarness
+# MinecraftHarness-Claude
 
-**Real-time AI Minecraft (1.21.x / 26.x) building, VFX/SFX, and playable command-block / datapack minigame harness powered by OpenClaw—or standalone as a single drop-in JAR.**  
-Type one line in chat (`!<prompt>`) and watch AI design original builds, interiors, and playable minigames right where you are looking—with **no client mods required** (vanilla Java 1.21.x / 26.x + optional Iris/shaders).
+[![CI](https://github.com/Lapius7/MinecraftHarness-Claude/actions/workflows/ci.yml/badge.svg)](https://github.com/Lapius7/MinecraftHarness-Claude/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+![Paper](https://img.shields.io/badge/Paper-1.21.x%20%7C%2026.x-3b82f6)
+![Java](https://img.shields.io/badge/Java-21%2B-orange)
 
-> **[日本語クイックスタート (Japanese Quick Start)](#日本語クイックスタート)** は下部にあります。
+チャットに一行書くだけで、Claude が見ている場所に建築物やコマンドブロックのミニゲームを作る PaperMC プラグインです。クライアント側の MOD は要りません。JAR を `plugins/` に 1 つ置けば動きます。
 
----
+[ykundesu/MinecraftHarness](https://github.com/ykundesu/MinecraftHarness) をもとに、Claude 専用として作り直したフォークです。他の AI プロバイダーと外部ゲートウェイは取り除きました。
 
-## Highlights
-- **Hybrid Architecture — Single-JAR Standalone + OpenClaw Gateway Mode**:
-  - **Drop-in Single-JAR Mode**: Just drop `MinecraftHarness-*.jar` into your PaperMC / Purpur `plugins/` folder (1.21.0–1.21.x & 26.x) and run `/mh key <provider> <API_KEY>`—the built-in Java 21 agent runs with **zero Node.js or external processes required**.
-  - **OpenClaw Gateway + Live Dashboard Mode**: When the Node.js Bridge is connected (`.\restart-all.ps1`), the plugin automatically delegates to **OpenClaw** (`:18789`) over HTTP + in-memory Streamable HTTP MCP (or `.\restart-all.ps1 -Direct`). Works with Cerebras, OpenCode Go, OpenRouter, OpenDesign Go, Command Code, or any OpenAI-compatible provider.
-- **Streaming Speculative Execution & Activity-Aware Timeouts**:
-  - Incrementally parses streamed tool-call JSON as tokens arrive and starts placing blocks in PaperMC **while the model is still generating** (in both Bridge and standalone JAR modes).
-  - Activity-based idle timeout resets on every streamed reasoning/output/tool chunk, so long multi-step reasoning builds are never cut off mid-stream.
-- **Player Gaze Anchor & Persistent `anchorId`**: Captures raycast `lookTarget`, nearest-cardinal `(right, up, forward)` local coordinate basis, terrain heightmap, and `recentStructures` (`s1`, `s2`, ...) so follow-up edits target the exact build even after you walk around.
-- **Expressive Geometry & Space Tools (No Canned Templates)**:
-  - Full geometric primitive suite (`box`, `hollow_box`, `pillar`, `cylinder`, `dome`, `arch`, `stairs_run`, `bridge`, `spiral`, `ring`, `scatter`, `pattern`, `blocks`, `clear`)
-  - Universal **`mirrorX`** (auto-flips directional facing & double-door hinges) and **`repeat`** modifiers on any op
-  - **3D Region `move` / `shift` / `copy`** (plus `/mh shift <du>` / `/mh shift <dr> <du> <df>`) with 2-phase snapshot-first shifting so overlapping moves (e.g. lowering a build by 3 blocks) never corrupt blocks and remain fully undoable
-  - **Physical Auto-Fixers**: Auto-completes upper door halves & double-door hinges, bed heads, 2-block tall flora, stair headroom clearance (`autoHeadroom`), and common 1.21+ block-state aliases
-- **Playable Command Blocks & Datapacks**:
-  - Automatic Impulse/Repeating/Chain command block wiring (`auto:1b`, `{{REL r u f}}` coordinate macros, glass Command Core, arena triggers) and persistent `mc_function_pack` datapacks (1.21.0–1.21.x & 26.x `pack_format` auto-detected)
-  - 1ms live Mojang **Brigadier** syntax validation
-- **Cinematic VFX / SFX, Live HUD & Recording Tools**:
-  - Hovering constructor drones firing particle lasers, FPS-capped `BlockDisplay` pop-in animations, pentatonic amethyst chimes, persistent `illumination` particle presets
-  - Live BossBar telemetry showing phase, TTFT, tok/s, **live output token count**, cache hit %, and reasoning breakdown—plus per-step in-game chat replies (even during multi-step tool loops) and accurate runtime badges (`[OpenClaw]` / `[Direct AI]` / `[AI]`)
-  - `/mh film on` clean recording HUD & `/mh cam orbit|dolly` camera rigs
-- **Live Telemetry & Vision Dashboard (`http://127.0.0.1:25581/`)**:
-  - Real-time streaming reasoning viewer, TTFT / queue / prompt / completion timing, Server TPS & E2E TPS, Prompt Cache Hit %, live-synced model/thinking dropdowns, and captured `mc_take_photo` screenshots
-
----
-
-## Project Layout
-- `plugin/` — PaperMC 1.21.x / 26.x Java plugin (`MinecraftHarness-*.jar`, local WebSocket `:25580`)
-- `bridge/` — Node.js TypeScript Bridge daemon (`:25581`), Telemetry Proxy (`:25582`), Direct Agent, MCP server (`mc_*`), and prompt workspace
-- `config/` — Clean configuration template (`openclaw.example.json`)
-- `server/` — PaperMC 1.21.4 local server setup & launch scripts
-
----
-
-## Quick Start (Windows — 3 Steps)
-
-### Prerequisites
-- **Java 21+** (Java 25+ if running PaperMC 26.x)
-- **Node.js 20+** (for the Bridge)
-- **Minecraft Java Edition 1.21.x / 26.x** (tested on PaperMC 1.21.4; compatible with Paper/Purpur **1.21.0–1.21.x & 26.x**, vanilla client or Fabric + Iris Shaders)
-- An API key for Cerebras, OpenCode Go, OpenRouter, OpenDesign Go, Command Code, or any OpenAI Chat Completions-compatible model with tool calling
-
-> **Standalone Single-JAR Mode (No Node.js Required)**: You can download `MinecraftHarness-*.jar` directly from [GitHub Releases](https://github.com/ykundesu/MinecraftHarness/releases), drop it into your PaperMC / Purpur `plugins/` folder, start the server, and run `/mh key <cerebras|opencode-go|openrouter|opendesign|commandcode> <YOUR_API_KEY>` (or edit `plugins/MinecraftHarness/config.yml`). When no external Bridge is connected, the plugin's built-in Java AI agent handles prompts automatically! If you also run the Node.js Bridge (`.\restart-all.ps1`), the plugin automatically switches to OpenClaw Gateway + Live Telemetry Dashboard mode.
-
-### 1. Configure your API key
-Copy `.env.example` to `.env` in the project root and set your key:
-```powershell
-Copy-Item .env.example .env
-# Edit .env and set CEREBRAS_API_KEY=... (or another provider's API key)
+```text
+!屋根に煙突のある、庭つきの木の家を建てて
+!3ステージのネオンパルクールを作って。ジャンプ台とゴールの花火つき
+!さっきの家を2ブロック下げて
 ```
 
-### 2. Build & launch PaperMC + Bridge in one command
-```powershell
-.\restart-all.ps1
-```
-This automatically:
-- Bootstraps `.openclaw-home/.openclaw/openclaw.json` from `config/openclaw.example.json`
-- Downloads PaperMC 1.21.4 (first run only; see EULA notice below)
-- Builds the Java plugin (`plugin/`) and installs/builds the TypeScript Bridge (`bridge/`)
-- Launches **PaperMC (:25565)**, **OpenClaw Gateway (:18789)**, and **Bridge + Telemetry Dashboard (`http://127.0.0.1:25581/`)** in parallel *(automatically falls back to standalone Direct Mode if OpenClaw is not installed locally)*
+## 特長
 
-*(Options: `.\restart-all.ps1 -Build` to force rebuild, `.\restart-all.ps1 -StopOnly` to stop cleanly, `.\restart-all.ps1 -Direct` to run standalone without OpenClaw Gateway.)*
+- **認証は 2 通りだけ**
+  - Claude のサブスクリプション: 公式の `claude` CLI を子プロセスとして呼びます。OAuth トークンには触りません。
+  - Anthropic API キー: Messages API を直接呼びます（ストリーミング、tool_use、プロンプトキャッシュ）。
+- **JAR 1 つで完結**: Node のブリッジも別プロセスも要りません。`claude` CLI を使う場合だけ、サーバー機に CLI が必要です。
+- **視線位置に建てる**: 見ている場所を基準に建築し、`s1`、`s2` のように最近の建築物を覚えているので、後から直せます。
+- **建てながら配置**: 応答の生成中から、届いた分のブロックを置き始めます（API モード）。
+- **一括で取り消せる**: `/mh undo` で最後の建築を戻します。
+- **録画向けの機能**: Film モード、カメラ（orbit / dolly）、VFX / SFX。
 
-### 3. Join & build
-1. Connect in Minecraft Java 1.21.4 to `localhost:25565`.
-2. Make yourself OP in the PaperMC server console (`op <your_minecraft_name>`).
-3. Type in chat:
-   ```text
-   !Build a cozy wooden cottage with a glowing garden and interior right in front of me
-   ```
+## 必要なもの
 
----
+| 項目 | 内容 |
+| --- | --- |
+| サーバー | Paper または Paper 系（1.21.x、26.x） |
+| Java | 21 以上（26.x は Paper の要件で 25 以上） |
+| 認証 | `claude` CLI にログイン済みのサブスクリプション、または Anthropic API キー |
 
-## macOS / Linux Manual Launch
-1. Build the plugin and copy the JAR into your PaperMC 1.21.4 `plugins/` folder:
-   ```bash
-   cd plugin && ./gradlew build && cd ..
-   ```
-2. Copy `.env.example` to `.env` and fill in your API key.
-3. Build and start the Bridge:
-   ```bash
-   cd bridge && npm install && npm run build && node dist/server.js
-   ```
-   *(On non-Windows platforms, `mc_take_photo` automatically falls back to the built-in top-down voxel map renderer.)*
+## 導入
 
----
+1. [Releases](https://github.com/Lapius7/MinecraftHarness-Claude/releases) の `MinecraftHarness-<version>.jar` を、サーバーの `plugins/` に置きます。
+2. サーバーを起動します。`plugins/MinecraftHarness/config.yml` ができます。
+3. 認証を選びます。
 
-## Switching / Adding LLM Providers
+### A. Claude サブスクリプション（`claude` CLI）
 
-Use `set-provider.ps1` (or `node bridge/provider-config.mjs`)—Direct Mode reads the updated config on the next turn without restarting Bridge:
+サーバー機に [Claude Code](https://docs.claude.com/en/docs/claude-code) をインストールし、サーバーを動かすユーザーで一度ログインします。
 
-```powershell
-.\set-provider.ps1 -List
-.\set-provider.ps1 cerebras
-.\set-provider.ps1 opendesign      # DeepSeek V4.1 Flash (OpenDesign Go, OPENDESIGN_API_KEY)
-.\set-provider.ps1 opencode-go     # OpenCode Go (OPENCODE_GO_API_KEY or OPENCODE_API_KEY; auto x-opencode-session header)
-.\set-provider.ps1 openrouter      # OpenRouter (OPENROUTER_API_KEY)
-.\set-provider.ps1 openrouter -Model "deepseek/deepseek-r1"   # Any OpenRouter model ID
-.\set-provider.ps1 commandcode
+```bash
+claude        # 初回のみ。ブラウザでログインする
 ```
 
-You can also switch models directly **in-game** with `/mh model` (clickable chat menu + Tab completion) or from the live Telemetry Dashboard (`http://127.0.0.1:25581/`). Any model on an existing provider can also be selected dynamically on the fly—for example:
-- `/mh model opencode-go/kimi-k2.5`
-- `/mh model openrouter/anthropic/claude-sonnet-4.5`
-- `/mh model openrouter/<any-model-id>`
+ゲーム内では何もせず `cli/opus` のまま使えます。プラグインは次のように CLI を呼びます。
 
-To register any HTTPS OpenAI Chat Completions-compatible provider (OpenAI, OpenRouter, Groq, DeepSeek, etc.):
-```powershell
-.\set-provider.ps1 myprovider -Model "your-model-id" -BaseUrl "https://api.example.com/v1" -ApiKeyEnv "MY_PROVIDER_API_KEY"
+- 1 プレイヤーにつき 1 セッションを使い回し、2 回目以降は `--resume` で続けます。
+- ツールは `--tools ""` で CLI 標準のものをすべて無効にし、プラグインがローカル（`127.0.0.1`）で立てる MCP サーバーのツールだけを許可します。
+- 子プロセスの環境変数から `ANTHROPIC_API_KEY` と `ANTHROPIC_AUTH_TOKEN` を外すので、サブスクリプションの枠で動きます。
+
+`claude` が `PATH` に無い場合は、`config.yml` の `claude.binary` か環境変数 `MH_CLAUDE_BIN` でパスを指定します。
+
+### B. Anthropic API キー
+
+**コンソールから**設定してください。
+
+```text
+mh key anthropic sk-ant-...
+mh model api/claude-opus-5-5
 ```
-Put `MY_PROVIDER_API_KEY=...` in `.env` and select it with `.\set-provider.ps1 myprovider`.
 
----
+> **注意**: ゲーム内で `/mh key anthropic <キー>` を打つと、コマンドとしてサーバーの `latest.log` に残ります。コンソールから実行するか、環境変数 `ANTHROPIC_API_KEY`、または `plugins/MinecraftHarness/.env` を使ってください。
 
-## Basic Usage (In-Game)
+キーの探索順は `config.yml`、環境変数 `ANTHROPIC_API_KEY`、`.env` です。
 
-1. **Build where you are looking**: Look at an open spot and type `!<prompt>` in chat:
-   ```text
-   !Build a cozy wooden cottage with a glowing garden and interior
-   !Create a playable 3-stage neon parkour minigame with jump pads and a finish fireworks trigger
-   ```
-2. **Iterate naturally**: Follow up in the same conversation—MinecraftHarness remembers your recent builds (`s1`, `s2`, ...) so you can walk around and still edit them:
-   ```text
-   !Add a second-floor balcony and warm lanterns around the entrance
-   !Lower that house by 2 blocks
-   ```
-3. **Quick adjustments & undo**:
-   - `/mh shift -3` — Move the last build down 3 blocks without rebuilding
-   - `/mh undo` — Restore the terrain & remove entities cleanly
-   - `!new` — Start a fresh conversation session
-4. **Switch AI models live**:
-   - Type `/mh model` in chat for a clickable menu, or specify any model directly (e.g. `/mh model cerebras`, `/mh model opendesign`, `/mh model opencode-go/kimi-k2.5`, `/mh model openrouter/deepseek/deepseek-v3.2`).
-5. **Watch live reasoning & metrics**:
-   - Open `http://127.0.0.1:25581/` in your browser to see live reasoning tokens, TTFT, TPS, prompt cache hit rate, captured screenshots, and a model/thinking selector.
+## コマンド
 
----
+`/mh` の権限は 2 段階です。`minecraftharness.use` は建築とその操作、`minecraftharness.admin` はモデルやキーなどサーバー全体に効く操作です。どちらもデフォルトは OP です。
 
-## In-Game Commands
-- `!<prompt>` or `/mh <prompt>` — Build, edit, or create minigames at your gaze target
-- `/mh model [name]` — Show clickable model selector in chat or switch active provider/model live (e.g. `/mh model cerebras`, `/mh model opendesign`, `/mh model opencode-go`, `/mh model openrouter/deepseek/deepseek-v3.2`)
-- `/mh key <provider> <api-key>` — Save a provider API key to `plugins/MinecraftHarness/config.yml` for Standalone Single-JAR Mode
-- `!new` / `/mh session list|use <name>` — Reset or switch conversation sessions for your player
-- `/mh undo` / `/mh reset` — Restore terrain & remove spawned entities cleanly
-- `/mh shift <du>` / `/mh shift <dr> <du> <df>` — Shift the most recent structure by an offset (e.g. `/mh shift -3` lowers it by 3 blocks)
-- `/mh film on|off` — Clean recording mode (hides BossBar/ActionBar HUD, chat echoes, and command feedback)
-- `/mh cam orbit [radius] [height] [speed]` | `/mh cam dolly` | `/mh cam off` — Smooth cinematic camera rig
-- `/mh hud on|off` | `/mh hud reasoning on|off` — Toggle in-game AI Telemetry BossBar & live reasoning ActionBar
-- `/mh fx on|off` | `/mh fx sound on|off` — Toggle VFX / SFX
-- `/mh speed <turbo|fast|cinematic>` — Adjust block placement speed (`fast` default)
-- `/mh reasoning <off|minimal|low|medium|high>` — Set model `reasoning_effort` (`low` default)
-- `/mh status` / `/mh stop` — Inspect status or halt active build
+| コマンド | 権限 | 説明 |
+| --- | --- | --- |
+| `!<プロンプト>` / `/mh <プロンプト>` | use | 視線の先に建てる |
+| `!new` / `/mh claude clear` | use | 自分の会話を破棄して、新しいセッションで始める |
+| `/mh model` | use | クリックで切り替えるモデル一覧。使用中のモデルも分かる |
+| `/mh model <参照>` | admin | モデルを切り替える（例: `cli/sonnet`、`api/claude-opus-5-5`） |
+| `/mh key anthropic <キー>` | admin | API キーを保存する（`clear` で削除） |
+| `/mh reasoning <low\|medium\|high\|xhigh\|max>` | admin | 思考の強さ |
+| `/mh undo` | use | 最後の建築を取り消す |
+| `/mh reset` | admin | このセッションの建築をすべて戻す |
+| `/mh shift <上下>` / `/mh shift <右> <上> <前>` | use | 直近の建築物をずらす |
+| `/mh film on\|off` | use | 録画モード（HUD とコマンド出力を隠す） |
+| `/mh cam orbit\|dolly\|off` | use | カメラワーク |
+| `/mh hud on\|off` / `/mh fx on\|off` / `/mh speed <turbo\|fast\|cinematic>` | use | 表示、演出、設置速度 |
+| `/mh stop` / `/mh status` | use | 実行中の処理を止める / 状態を見る |
 
----
+Tab 補完は、持っている権限で使えるものだけ出ます。
 
-## Security & Minecraft EULA Notice
-- **Local / Trusted OP Use Only**: MinecraftHarness allows the AI to execute server commands (`mc_exec_commands`), wire command blocks (`mc_place_command_chain`), and deploy datapacks (`mc_function_pack`) with server console privileges.
-  - All local sockets (`25580`, `25581`, `25582`, `18789`) bind strictly to `127.0.0.1`. **Never expose these ports to a public network or install this plugin on an untrusted public server.**
-  - In-game triggers require the `minecraftharness.use` permission (defaults to `op`).
-- **Minecraft EULA**: Running `server/setup-server.ps1` downloads PaperMC 1.21.4 and writes `eula=true` to `server/eula.txt`. By running it, you indicate your agreement to the [Minecraft EULA](https://aka.ms/MinecraftEULA).
+### モデル
 
----
+| 参照 | 実体 |
+| --- | --- |
+| `cli/opus`、`cli/sonnet`、`cli/haiku` | `claude` CLI（サブスクリプション） |
+| `api/claude-opus-5-5`、`api/claude-sonnet-5-5`、`api/claude-haiku-5-5`、`api/claude-fable-5-2` | Messages API（API キー） |
+| `cli/<任意のID>`、`api/<任意のID>` | 上の一覧に無いモデルを直接指定 |
 
-## 日本語クイックスタート
+## 設定（`config.yml`）
 
-**MinecraftHarness** は、マイクラ Java 版 **1.21.x / 26.x**（MOD不要・シェーダー対応）のチャット欄に `!作りたいもの` と打つだけで、視線の先にAIがオリジナル建築・内装・コマンドブロック製ミニゲームをリアルタイム生成してくれる PaperMC プラグイン＋Node.js ブリッジです。
+```yaml
+activeModel: cli/opus
+reasoning: low          # low | medium | high | xhigh | max
+maxSteps: 12            # API モードの最大ツール往復数
+anthropic:
+  apiKey: ""
+  baseUrl: https://api.anthropic.com
+  maxTokens: 32000
+claude:
+  binary: ""            # 空なら "claude"（Windows は "claude.exe"）
+  idleTimeoutSeconds: 300
+mcp:
+  port: 0               # 0 なら空きポートを自動で選ぶ（127.0.0.1 のみ）
+```
 
-### 必要環境
-- **Java 21 以上**（Paper 26.x で動かす場合は **Java 25 以上**） / **Node.js 20 以上** / **Minecraft Java 1.21.x または 26.x**
-- Cerebras・OpenCode Go・OpenRouter・OpenDesign Go などの OpenAI 互換 API キー（OpenClaw モード標準／OpenClaw 未導入環境では `.\restart-all.ps1 -Direct` で自動スタンドアロン起動）
+## ビルド
 
-### JAR 単体で動かす場合（Node.js 不要・Mac / Linux / レンタルサーバー対応）
-1. [GitHub Releases](https://github.com/ykundesu/MinecraftHarness/releases) から `MinecraftHarness-*.jar` をダウンロードし、PaperMC / Purpur の `plugins/` フォルダへ配置して起動
-2. サーバーコンソールまたはゲーム内チャット（OP権限）で API キーを設定（または `plugins/MinecraftHarness/config.yml` に直接記入）：
-   ```text
-   /mh key cerebras <APIキー>
-   /mh model
-   ```
-3. そのままチャットで `!目の前に秘密基地作って` と話しかけるだけで動きます！（Node.js Bridge / OpenClaw が接続された場合は自動で Bridge モードへ切り替わります）
+JDK 21 が必要です。
 
-### 3ステップ起動（Windows・OpenClaw / ダッシュボード込みフル構成）
-1. ルートの `.env.example` を `.env` にコピーし、`CEREBRAS_API_KEY=...` 等の API キーを記入
-2. PowerShell で以下を実行（初回は PaperMC ダウンロード・ビルドまで自動完了します）：
-   ```powershell
-   .\restart-all.ps1
-   ```
-3. マイクラで `localhost:25565` に接続し、PaperMC コンソールで `op <自分のMCID>` を実行したら準備完了！
+```bash
+cd plugin
+./gradlew build
+```
 
-### 簡単な使い方（ゲーム内）
-- **視線の先に建築・ミニゲーム生成**: 作りたい場所を見て、チャットに `!` 付きで話しかけます
-  ```text
-  !目の前に温泉付きの和風旅館を作って
-  !ジャンプ台とゴール演出つきの遊べるアスレチックを作って
-  ```
-- **続けて修正・アレンジ**: 前の建築を覚えているので、移動した後でもそのまま追加指示できます
-  ```text
-  !さっきの建物の屋根をもう少し高くして、入口に提灯をつけて
-  !全体を2ブロック下げて
-  ```
-- **よく使うコマンド**:
-  - `/mh key <provider> <APIキー>` — JAR 単体モード用の API キーを設定（`cerebras` / `opencode-go` / `openrouter` / `opendesign` / `commandcode`）
-  - `/mh model` — チャット上のクリックメニューで AI モデルを即切替（`/mh model openrouter/<任意のモデルID>` や `/mh model opencode-go/<モデルID>` も可）
-  - `/mh undo` — 直前の建築・エンティティをきれいに元に戻す
-  - `/mh shift -3` — 直前の建築を丸ごと下へ 3 ブロック移動（`/mh shift <右> <上> <前>`）
-  - `!new` — 会話履歴をリセットして新しい話題に切り替える
-  - `/mh reasoning <off|low|medium|high>` — AI の思考量（`reasoning_effort`）を変更
-  - `/mh film on` / `/mh cam orbit` — 録画向けの HUD 非表示・自動周回カメラ
-  - `/mh status` / `/mh stop` — 現在の動作モード（`OpenClaw` / `Direct AI` / `Standalone`）確認やビルド中断
-- **ライブダッシュボード**: ブラウザで **`http://127.0.0.1:25581/`** を開くと、AIの思考テキスト・TTFT・TPS・出力トークン数・キャッシュヒット率・スクショ・モデル切替をリアルタイムで確認できます（推論やツール呼び出しが動いている間はタイムアウトで切れないアイドル監視方式）。
+できた JAR は `plugin/build/libs/MinecraftHarness-<version>.jar` です。これをサーバーの `plugins/` に置きます。
 
----
+26.x の API に対するコンパイル確認は、JDK 25 で次のように行います。
 
-## License
-Released under the [MIT License](LICENSE).
+```bash
+./gradlew build -PpaperApi=26.3.build.258-stable
+```
+
+## 設計メモ
+
+- **Node ブリッジを Java に移した**: ストリーミング、ツールの往復、プロンプトキャッシュ、履歴の整合性（`tool_use` と `tool_result` の対応）はすべてプラグイン内にあります。
+- **API の呼び出しは `java.net.http` で直接行う**: 公式 SDK を同梱すると JAR が大きくなり、1 JAR で配る前提と合わないためです。再試行（408、409、429、5xx、529）と、思考パラメータを拒否された場合の再送は自前で持っています。
+- **`claude` CLI だけは別プロセス**: サブスクリプションの認証は CLI の中にあり、取り出さない方針なので、移植せずに子プロセスとして呼びます。CLI にはプラグインの MCP サーバーのトークン付き URL を渡し、そのツールだけを許可します。
+
+## 確認済みの範囲
+
+- 単体テスト（SSE、履歴、リクエスト生成、MCP、CLI の引数）と、Paper 1.21.4 API / 26.3 API に対するコンパイルは CI で通ります。
+- `claude` CLI 2.1.330 で、MCP サーバーへの接続とツール呼び出しの往復を確認しました。
+- 実サーバー上のゲーム内動作と、API キーでの実呼び出しは、このリポジトリのテストでは確認していません。
+
+## ライセンス
+
+MIT。元の著作権表示（MinecraftHarness Contributors）は [LICENSE](LICENSE) に残しています。元プロジェクト: [ykundesu/MinecraftHarness](https://github.com/ykundesu/MinecraftHarness)
