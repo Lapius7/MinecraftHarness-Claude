@@ -1,14 +1,11 @@
 .tools/
-.openclaw-home/
 .env
 .env.*
-!.env.example
 *.jar
 !plugin/gradle/wrapper/gradle-wrapper.jar
 *.log
 hs_err_pid*.log
 replay_pid*.log
-bridge/provider-routes.json
 server/world/
 server/world_nether/
 server/world_the_end/

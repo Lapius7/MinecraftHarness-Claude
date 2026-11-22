@@ -28,22 +28,11 @@ jobs:
           cache: 'gradle'
           cache-dependency-path: plugin/build.gradle.kts
 
-      - name: Set up Node.js 22
-        uses: actions/setup-node@v4
-        with:
-          node-version: '22'
-
       - name: Build PaperMC plugin JAR
         working-directory: plugin
         run: |
           chmod +x gradlew
           ./gradlew build --no-daemon
-
-      - name: Type-check & build Bridge
-        working-directory: bridge
-        run: |
-          npm ci
-          npm run build
 
       - name: Upload plugin JAR to latest Draft GitHub Release (or create one)
         env:

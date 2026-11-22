@@ -24,7 +24,7 @@ import java.util.Map;
 
 /**
  * Captures player gaze, nearest-cardinal camera basis, terrain heightmap,
- * and recent built structure anchors so OpenClaw places creations in frame.
+ * and recent built structure anchors so the model places creations in frame.
  */
 public final class SpatialContextProvider {
 
