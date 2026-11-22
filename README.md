@@ -292,7 +292,7 @@ Claude は 1 つずつ処理するので、実行中に送った指示は順番�
 
 ## English summary
 
-**MinecraftHarness-Claude** is a Paper plugin (Java Edition, Paper 1.21.x / 26.x, Java 21+) that lets players build structures and command-block minigames in Minecraft by chatting with Claude (`!build a wooden house with a chimney`). It ships as a single JAR with no external bridge.
+**MinecraftHarness-Claude** is a Paper plugin (Java Edition; Paper 1.21.x needs Java 21+, Paper 26.x needs Java 25+) that lets players build structures and command-block minigames in Minecraft by chatting with Claude (`!build a wooden house with a chimney`). It ships as a single JAR with no external bridge.
 
 - **Two ways to connect**: your Claude subscription through the official `claude` CLI (run as a child process; OAuth tokens are never read or copied), or an Anthropic API key (Messages API).
 - **Features**: build tools, one reused session per player, a prompt queue, bossbar progress, a self-review loop (`off` to `max`), automatic intent detection (continue / new build / review), tool-use lines in chat, and a result summary.
