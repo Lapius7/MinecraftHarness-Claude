@@ -76,6 +76,7 @@ public final class HarnessAgent {
         this.host = new ToolHost(plugin, mainThreadAction);
         String prompt = ToolHost.loadResourceText("/agent-prompt.md",
             "You are MinecraftHarness, an expert real-time Minecraft builder.");
+        prompt = prompt + TonePrompt.addendum(plugin.getConfig().getString("agent.tone", TonePrompt.DEFAULT));
         this.api = new AnthropicBackend(host, prompt, callCounter);
         this.cli = new ClaudeCliBackend(host, prompt, callCounter);
         byte[] rnd = new byte[16];
@@ -301,6 +302,7 @@ public final class HarnessAgent {
             }
             String bin = c.getString("claude.binary", "");
             File work = new File(plugin.getDataFolder(), "claude-cli");
+            cli.setDebugFile(c.getBoolean("claude.debugLog", false) ? new File(plugin.getDataFolder(), "logs/cli-stream.log") : null);
             cli.runTurn(new ClaudeCliBackend.Settings(
                 bin == null || bin.isBlank() ? ClaudeCliBackend.defaultBinary() : bin.trim(),
                 work, url, model.id(), Math.max(30, c.getInt("claude.idleTimeoutSeconds", 300))), in);

@@ -26,6 +26,14 @@ effort: low
 progress:
   mode: bossbar
 
+# Tone of Claude's replies in game.
+#   friendly  a helpful, relaxed tone; after a build it says what it made, offers 2-3 next ideas
+#             and invites fixes (default)
+#   concise   one or two short sentences, no suggestions
+# Applied at startup (restart or /reload after changing).
+agent:
+  tone: friendly
+
 # Maximum tool-calling rounds per prompt (API mode)
 maxSteps: 12
 
@@ -41,6 +49,9 @@ claude:
   binary: ""
   # Stop the CLI when it prints nothing for this long
   idleTimeoutSeconds: 300
+  # true: write the raw stream-json lines, process start/exit and stderr to
+  # plugins/MinecraftHarness/logs/cli-stream.log (for finding why a request is slow or stuck).
+  debugLog: false
 
 mcp:
   # Local port of the tool server that the claude CLI connects to (127.0.0.1 only).

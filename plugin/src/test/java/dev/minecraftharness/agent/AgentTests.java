@@ -67,6 +67,27 @@ class AgentTests {
         assertEquals(List.of("low", "medium", "high", "xhigh", "max"), ModelCatalog.effortLevels());
     }
 
+    @Test void toneAddendum() {
+        assertEquals("friendly", TonePrompt.normalize(null));
+        assertEquals("concise", TonePrompt.normalize(" Concise "));
+        assertEquals("friendly", TonePrompt.normalize("weird"));
+        assertTrue(TonePrompt.addendum("friendly").contains("2-3 concrete next ideas"));
+        assertTrue(TonePrompt.addendum("friendly").contains("anchorId"));
+        assertFalse(TonePrompt.addendum("concise").contains("2-3 concrete"));
+        assertTrue(TonePrompt.addendum("concise").contains("anchorId"));
+    }
+
+    @Test void streamDebugLogWritesOnlyWhenEnabled() throws Exception {
+        File dir = java.nio.file.Files.createTempDirectory("mhlog").toFile();
+        File f = new File(dir, "logs/cli-stream.log");
+        new StreamDebugLog(null).line("out", "x");
+        assertFalse(f.exists());
+        StreamDebugLog log = new StreamDebugLog(f);
+        log.line("out", "{\"type\":\"system\"}");
+        String text = java.nio.file.Files.readString(f.toPath());
+        assertTrue(text.contains("[out] {\"type\":\"system\"}"));
+    }
+
     // ---- AnthropicHistory ----
     @Test void historyToolResultConsistency() {
         AnthropicHistory h = new AnthropicHistory();

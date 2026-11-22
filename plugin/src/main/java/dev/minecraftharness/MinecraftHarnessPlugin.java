@@ -188,7 +188,10 @@ public final class MinecraftHarnessPlugin extends JavaPlugin implements Listener
         if (!cameraRig.isFilmMode() && progressDisplay.mode() == ProgressMode.OFF) {
             player.sendMessage(Component.text("⚡ 受付: " + model.ref() + " (" + reasoningMode + ")", NamedTextColor.AQUA));
         }
-        agent.host().progress().begin(player.getName());
+        dev.minecraftharness.progress.ProgressState ps = agent.host().progress().begin(player.getName());
+        if (ps.queued() > 0) {
+            player.sendMessage(Component.text("⚡ 前の依頼が終わってから実行します(" + (ps.queued() + 1) + " 番目)", NamedTextColor.YELLOW));
+        }
         progressDisplay.tick(cameraRig.isFilmMode());
         agent.enqueuePrompt(player.getName(), prompt, cameraRig.isFilmMode(), reasoningMode, anchor);
     }

@@ -36,6 +36,12 @@ public final class ClaudeCliBackend {
     private final String systemPrompt;
     private final AtomicInteger callCounter;
     private final AtomicReference<Process> active = new AtomicReference<>();
+    private volatile StreamDebugLog debug = new StreamDebugLog(null);
+
+    /** Null disables the raw stream log. */
+    public void setDebugFile(File f) {
+        debug = new StreamDebugLog(f);
+    }
 
     public ClaudeCliBackend(ToolHost host, String systemPrompt, AtomicInteger callCounter) {
         this.host = host;
@@ -212,6 +218,8 @@ public final class ClaudeCliBackend {
                 "`" + cfg.binary() + "` を起動できません(" + ex.getMessage() + ")。claude CLI をインストールするか MH_CLAUDE_BIN で場所を指定してください。");
         }
         active.set(proc);
+        final StreamDebugLog dbg = debug;
+        dbg.line("start", "pid=" + proc.pid() + " player=" + player + " resume=" + resume + " effort=" + (withEffort ? effort : "-"));
 
         long[] lastActivity = {System.currentTimeMillis()};
         boolean[] timedOut = {false};
@@ -241,6 +249,7 @@ public final class ClaudeCliBackend {
             try (BufferedReader r = new BufferedReader(new InputStreamReader(proc.getErrorStream(), StandardCharsets.UTF_8))) {
                 String l;
                 while ((l = r.readLine()) != null) {
+                    dbg.line("stderr", l);
                     if (stderr.length() < 4000) stderr.append(l).append('\n');
                 }
             } catch (IOException ignored) {
@@ -274,6 +283,7 @@ public final class ClaudeCliBackend {
             while ((line = r.readLine()) != null) {
                 lastActivity[0] = System.currentTimeMillis();
                 if (line.isBlank()) continue;
+                dbg.line("out", line.length() > 4000 ? line.substring(0, 4000) + "…" : line);
                     host.progress().activity(player);
                 JsonObject j;
                 try {
@@ -362,6 +372,7 @@ public final class ClaudeCliBackend {
         int exit = -1;
         try {
             exit = proc.waitFor();
+            dbg.line("exit", "code=" + exit + " timedOut=" + timedOut[0] + " cancelled=" + in.cancelled().getAsBoolean());
         } catch (InterruptedException ie) {
             Thread.currentThread().interrupt();
             killTree(proc);

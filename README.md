@@ -75,7 +75,7 @@ mh model api/claude-opus-5-5
 
 | コマンド | 権限 | 説明 |
 | --- | --- | --- |
-| `!<プロンプト>` / `/mh <プロンプト>` | use | 視線の先に建てる |
+| `!<プロンプト>` / `/mh <プロンプト>` | use | 視線の先に建てる。送信すると送った人に進捗が出る（下の「進捗表示」）。入力した文の再表示はしない。実行中にもう一度送ると、前の依頼が終わってから実行する |
 | `!new` / `/mh claude clear` | use | 自分の会話を破棄して、新しいセッションで始める |
 | `/mh model` | use | クリックで切り替えるモデル一覧。使用中のモデルも分かる |
 | `/mh model <参照>` | admin | モデルを切り替える（例: `cli/sonnet`、`api/claude-opus-5-5`） |
@@ -87,7 +87,8 @@ mh model api/claude-opus-5-5
 | `/mh shift <上下>` / `/mh shift <右> <上> <前>` | use | 直近の建築物をずらす |
 | `/mh film on\|off` | use | 録画モード（HUD とコマンド出力を隠す） |
 | `/mh cam orbit\|dolly\|off` | use | カメラワーク |
-| `/mh hud on\|off` / `/mh fx on\|off` / `/mh speed <turbo\|fast\|cinematic>` | use | 表示、演出、設置速度 |
+| `/mh progress <bossbar\|actionbar\|off>` | admin | 進捗の表示先。`config.yml` に保存される。引数なしで現在値を表示 |
+| `/mh hud on\|off` / `/mh fx on\|off` / `/mh speed <turbo\|fast\|cinematic>` | use | 全員向けの詳細 HUD（既定は off）、演出、設置速度 |
 | `/mh` / `/mh help [ページ\|カテゴリ]` | use | ヘルプ。コマンドの行をクリックすると入力欄に入り、ホバーで使用例と権限が出る。権限のないコマンドは灰色になる |
 | `/mh stop` / `/mh status` | use | 実行中の処理を止める / 状態を見る |
 
@@ -116,6 +117,11 @@ anthropic:
 claude:
   binary: ""            # 空なら "claude"（Windows は "claude.exe"）
   idleTimeoutSeconds: 300
+  debugLog: false       # true で logs/cli-stream.log に CLI の生の出力を残す
+progress:
+  mode: bossbar         # bossbar | actionbar | off
+agent:
+  tone: friendly        # friendly | concise
 mcp:
   port: 0               # 0 なら空きポートを自動で選ぶ（127.0.0.1 のみ）
 ```
@@ -136,6 +142,30 @@ cd plugin
 ```bash
 ./gradlew build -PpaperApi=26.3.build.258-stable
 ```
+
+### 進捗表示
+
+`!<プロンプト>` か `/mh <プロンプト>` を送った人だけに、応答が終わるまで 1 秒ごとに更新される表示が出ます。`progress.mode` か `/mh progress` で、画面上部のボスバー、アクションバー、なしから選べます。Film モード中は出ません。
+
+| 表示 | 意味 |
+| --- | --- |
+| 受付: 待機中 | 送信直後。CLI や API の最初の反応を待っている |
+| 思考中 / 応答中 約Nトークン | 考えている / 文章を書いている |
+| ツール実行中 / 建築中: ツール名 N件目 | `mc_*` ツールの呼び出し。建築系は「建築中」 |
+| 応答待ち(N秒) | 30 秒以上なにも届いていない |
+| 完了 / 失敗: 理由 / 中断: 理由 | 数秒で消える。`/mh stop`、完了、エラー、退出でも必ず消える |
+
+実行中にもう一度送ると、前の依頼のあとに実行します。そのときは「前の依頼が終わってから実行します(N 番目)」と出ます。
+
+### 会話の口調と継続
+
+`agent.tone` で返事の口調を選べます（起動時に読みます）。`friendly` は建築後に作ったものを短く伝え、次の提案を 2、3 個出して、直したい点を尋ねます。`concise` は 1、2 文で済ませます。
+
+直前の建築は、スナップショットの `Recent structures`（`s1`、`s2` など）としてモデルに渡されます。「もっと庭を付けて」のような依頼は、その `anchorId` を使う編集として扱います。会話を捨てるのは、`!new` か `/mh claude clear` を使ったときだけです。
+
+### 遅いときの調べ方
+
+`claude.debugLog: true` にすると、CLI の起動、終了コード、標準出力の生の行、標準エラーを `plugins/MinecraftHarness/logs/cli-stream.log` に追記します。ファイルが 20 MB を超えると作り直します。
 
 ## 設計メモ
 
