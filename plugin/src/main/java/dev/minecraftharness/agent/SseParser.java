@@ -36,9 +36,11 @@ public final class SseParser {
         }
     }
 
-    /** Emits a pending event at end of stream. */
+    /** Drops an unterminated event at end of stream; SSE only commits an event on a blank line. */
     public void finish() {
-        flush();
+        event = "";
+        data.setLength(0);
+        hasData = false;
     }
 
     private void flush() {

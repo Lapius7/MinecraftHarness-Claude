@@ -299,7 +299,7 @@ public final class ToolHost {
         if (!ok) turn.allToolsOk = false;
         if ("mc_build_batch".equals(toolName)) {
             boolean finishFalse = args.has("finish") && args.get("finish").isJsonPrimitive() && !args.get("finish").getAsBoolean();
-            turn.batchNeedsFinish = finishFalse;
+            if (ok) turn.batchNeedsFinish = finishFalse;
         } else if ("mc_fx".equals(toolName) && ok
             && args.has("effect") && "finish".equalsIgnoreCase(args.get("effect").getAsString())) {
             turn.batchNeedsFinish = false;

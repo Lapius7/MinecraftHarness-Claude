@@ -43,7 +43,7 @@ public final class AnthropicBackend {
         this.callCounter = callCounter;
         this.http = HttpClient.newBuilder()
             .connectTimeout(Duration.ofSeconds(20))
-            .followRedirects(HttpClient.Redirect.NORMAL)
+            .followRedirects(HttpClient.Redirect.NEVER)
             .build();
     }
 
@@ -152,6 +152,7 @@ public final class AnthropicBackend {
             for (int step = 0; step < cfg.maxSteps(); step++) {
                 if (in.cancelled().getAsBoolean()) {
                     host.notifyChat(player, "ビルドを中断しました。", in.filmMode());
+                    if (!anyStepDone) history.truncateTo(rollbackTo);
                     return;
                 }
                 int callNo = callCounter.incrementAndGet();
@@ -160,7 +161,10 @@ public final class AnthropicBackend {
                 while (true) {
                     res = streamOnce(cfg, in, callNo, effort, withThinking);
                     if (res.ok) break;
-                    if (in.cancelled().getAsBoolean()) return;
+                    if (in.cancelled().getAsBoolean()) {
+                        if (!anyStepDone) history.truncateTo(rollbackTo);
+                        return;
+                    }
                     if (withThinking && isThinkingRejection(res.status, res.errorBody)) {
                         withThinking = false;
                         continue;
@@ -326,7 +330,9 @@ public final class AnthropicBackend {
             HttpResponse<InputStream> resp = http.send(req, HttpResponse.BodyHandlers.ofInputStream());
             out.status = resp.statusCode();
             if (out.status >= 400) {
-                out.errorBody = new String(resp.body().readAllBytes(), StandardCharsets.UTF_8);
+                try (InputStream eb = resp.body()) {
+                        out.errorBody = new String(eb.readNBytes(16384), StandardCharsets.UTF_8);
+                    }
                 host.emitHud(callNo, "ERROR", level, System.currentTimeMillis() - t0, "", player, true);
                 return out;
             }

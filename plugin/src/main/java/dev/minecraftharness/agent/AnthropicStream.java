@@ -190,7 +190,11 @@ public final class AnthropicStream {
 
     /** True once message_stop arrived; false means the connection ended early. */
     public boolean complete() {
-        return messageStopped && errorType == null;
+        if (!messageStopped || errorType != null) return false;
+        for (Block b : blocks.values()) {
+            if (!b.stopped) return false;
+        }
+        return true;
     }
 
     public String stopReason() {
