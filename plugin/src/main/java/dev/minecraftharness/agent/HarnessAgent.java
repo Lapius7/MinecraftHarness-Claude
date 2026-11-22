@@ -237,12 +237,18 @@ public final class HarnessAgent {
         if (shutdown) return;
         int gen = generation.get();
         executor.submit(() -> {
-            if (gen != generation.get()) return;
+            if (gen != generation.get()) {
+                host.progress().cancel(playerName, "/mh stop で停止");
+                return;
+            }
             try {
                 runPrompt(playerName, prompt, filmMode, reasoningLevel, anchor, gen);
+                host.progress().finish(playerName);
             } catch (Throwable t) {
                 plugin.getLogger().warning("Prompt failed: " + t);
                 host.notifyChat(playerName, "内部エラー: " + ToolHost.truncate(String.valueOf(t.getMessage()), 200), false);
+                host.progress().fail(playerName, "内部エラー");
+                host.progress().finish(playerName);
             } finally {
                 currentTurn = null;
             }
@@ -257,6 +263,7 @@ public final class HarnessAgent {
             host.notifyChat(playerName,
                 "APIキーが未設定です。コンソールで `mh key anthropic <キー>` を実行するか、config.yml の anthropic.apiKey に設定してください。"
                     + "サブスクリプションで使うなら `/mh model cli/opus` に切り替えてください。", false);
+            host.progress().fail(playerName, "APIキー未設定");
             return;
         }
 
@@ -264,6 +271,7 @@ public final class HarnessAgent {
         begin.addProperty("playerName", playerName);
         begin.add("anchor", ToolHost.GSON.toJsonTree(anchor));
         JsonObject ctx = host.callMainThread("begin_prompt", begin);
+        host.progress().thinking(playerName);
         String userMessage = ToolHost.formatSurroundingSummary(ctx) + "\n\nPlayer \"" + playerName + "\" says: " + prompt;
 
         PlayerState st = state(playerName);
@@ -288,6 +296,7 @@ public final class HarnessAgent {
             } catch (IOException ex) {
                 host.notifyChat(playerName, "MCP サーバーを起動できませんでした: " + ex.getMessage()
                     + "（config.yml の mcp.port を変えてみてください）", false);
+                host.progress().fail(playerName, "MCP を起動できません");
                 return;
             }
             String bin = c.getString("claude.binary", "");

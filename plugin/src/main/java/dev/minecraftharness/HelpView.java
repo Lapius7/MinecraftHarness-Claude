@@ -62,8 +62,10 @@ public final class HelpView {
 
         new Entry("演出", "/mh film", "/mh film ", "録画向けの表示",
             "チャットや HUD を抑えます。on / off。", "/mh film on", PERM_USE),
-        new Entry("演出", "/mh hud", "/mh hud ", "進捗 HUD",
-            "on / off。reasoning で思考ティッカーを切り替えます。", "/mh hud reasoning on", PERM_USE),
+        new Entry("演出", "/mh progress", "/mh progress ", "進捗の表示先",
+            "bossbar / actionbar / off。送信後の状態と経過秒を出します。", "/mh progress actionbar", PERM_USE),
+        new Entry("演出", "/mh hud", "/mh hud ", "詳細 HUD",
+            "全員向けの詳細表示(既定は off)。on / off、reasoning で思考ティッカー。", "/mh hud on", PERM_USE),
         new Entry("演出", "/mh fx", "/mh fx ", "VFX と効果音",
             "on / off、sound on / off。", "/mh fx sound off", PERM_USE),
         new Entry("演出", "/mh cam", "/mh cam ", "カメラ演出",

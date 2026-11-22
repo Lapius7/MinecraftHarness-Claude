@@ -62,8 +62,13 @@ public final class ToolHost {
     private static final Pattern THINK_TAG = Pattern.compile("(?i)</?think>");
 
     private final Plugin plugin;
+    private final dev.minecraftharness.progress.ProgressTracker progress = new dev.minecraftharness.progress.ProgressTracker();
     private final BiFunction<String, JsonObject, JsonObject> mainThreadAction;
     private final JsonArray tools;
+
+    public dev.minecraftharness.progress.ProgressTracker progress() {
+        return progress;
+    }
 
     public ToolHost(Plugin plugin, BiFunction<String, JsonObject, JsonObject> mainThreadAction) {
         this.plugin = plugin;
@@ -201,6 +206,15 @@ public final class ToolHost {
      * take it out with {@link #takeImage(JsonObject)} before serialising the result.
      */
     public JsonObject dispatch(String toolName, JsonObject args, Turn turn) {
+        progress.toolStart(turn.playerName, toolName);
+        try {
+            return dispatchInner(toolName, args, turn);
+        } finally {
+            progress.toolEnd(turn.playerName);
+        }
+    }
+
+    private JsonObject dispatchInner(String toolName, JsonObject args, Turn turn) {
         String playerName = turn.playerName;
         if ("mc_take_photo".equals(toolName)) {
             JsonObject snapReq = args.deepCopy();
