@@ -47,6 +47,30 @@ public final class ToolHost {
         public volatile boolean sawObservation;
         public volatile boolean allToolsOk = true;
         public volatile String fastReply;
+        /** Level the player set on purpose (--review or /mh review); the model's choice never overrides it. */
+        public volatile dev.minecraftharness.review.ReviewLevel reviewExplicit;
+        /** Level the model chose from the player's words through mc_review; null when it did not call it. */
+        public volatile dev.minecraftharness.review.ReviewLevel reviewChoice;
+        public volatile boolean reviewRequested;
+        public volatile String reviewAnchor;
+        /** Folds runs of the same tool into one chat line. */
+        public final dev.minecraftharness.progress.ToolChat toolChat = new dev.minecraftharness.progress.ToolChat();
+
+        /**
+         * The model asked for a check. The request itself always counts (unless it said off), so a
+         * review-only message still runs; a level set on purpose only decides the strength.
+         *
+         * @return true when the model's level was applied, false when the player's own level won
+         */
+        public boolean requestReview(dev.minecraftharness.review.ReviewLevel level, String anchor) {
+            if (level != dev.minecraftharness.review.ReviewLevel.OFF) {
+                reviewRequested = true;
+                if (anchor != null && !anchor.isBlank()) reviewAnchor = anchor;
+            }
+            if (!dev.minecraftharness.review.ReviewChoice.modelMayChoose(reviewExplicit)) return false;
+            reviewChoice = level;
+            return true;
+        }
         /** Numbers for the result summary; one object per prompt, shared with its review rounds. */
         public final dev.minecraftharness.summary.TurnStats stats;
         /** Everything the model said this turn, before report lines were hidden; the review loop reads it. */
@@ -240,6 +264,7 @@ public final class ToolHost {
      */
     public JsonObject dispatch(String toolName, JsonObject args, Turn turn) {
         progress.toolStart(turn.playerName, toolName);
+        chatTool(turn, toolName, args);
         try {
             return dispatchInner(toolName, args, turn);
         } finally {
@@ -247,8 +272,57 @@ public final class ToolHost {
         }
     }
 
+    /** One chat line per tool use (config progress.toolChat, default on); runs of the same tool are folded. */
+    private void chatTool(Turn turn, String toolName, JsonObject args) {
+        if (turn.filmMode || !plugin.getConfig().getBoolean("progress.toolChat", true)) return;
+        List<String> lines;
+        synchronized (turn.toolChat) {
+            lines = turn.toolChat.onTool(toolName, dev.minecraftharness.progress.ToolChat.describe(args));
+        }
+        for (String l : lines) notifyChat(turn.playerName, l, false);
+    }
+
+    /** Sends the folded "same tool again" line left over at the end of a prompt. */
+    public void flushToolChat(Turn turn) {
+        if (turn.filmMode || !plugin.getConfig().getBoolean("progress.toolChat", true)) return;
+        String tail;
+        synchronized (turn.toolChat) {
+            tail = turn.toolChat.flush();
+        }
+        if (tail != null) notifyChat(turn.playerName, tail, false);
+    }
+
+    /** The model picks how carefully the build is checked; the check itself runs after its turn. */
+    private JsonObject reviewTool(JsonObject args, Turn turn) {
+        JsonObject out = new JsonObject();
+        dev.minecraftharness.review.ReviewLevel level = args.has("level") && args.get("level").isJsonPrimitive()
+            ? dev.minecraftharness.review.ReviewLevel.parse(args.get("level").getAsString(), null) : null;
+        if (level == null) {
+            out.addProperty("ok", false);
+            out.addProperty("error", "level must be one of: " + String.join(", ", dev.minecraftharness.review.ReviewLevel.ids()));
+            return out;
+        }
+        String anchor = args.has("anchorId") && args.get("anchorId").isJsonPrimitive()
+            ? args.get("anchorId").getAsString() : null;
+        if (!turn.requestReview(level, anchor)) {
+            out.addProperty("ok", true);
+            out.addProperty("applied", false);
+            out.addProperty("note", "The player set the review level to " + turn.reviewExplicit.id()
+                + " on purpose; that wins. Do not mention this call.");
+            return out;
+        }
+        out.addProperty("ok", true);
+        out.addProperty("applied", true);
+        out.addProperty("level", level.id());
+        out.addProperty("note", "The check runs automatically after you finish. Do not check it yourself now.");
+        return out;
+    }
+
     private JsonObject dispatchInner(String toolName, JsonObject args, Turn turn) {
         String playerName = turn.playerName;
+        if ("mc_review".equals(toolName)) {
+            return reviewTool(args, turn);
+        }
         if ("mc_take_photo".equals(toolName)) {
             JsonObject snapReq = args.deepCopy();
             snapReq.addProperty("playerName", playerName);

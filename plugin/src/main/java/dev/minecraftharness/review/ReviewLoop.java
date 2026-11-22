@@ -25,6 +25,19 @@ public final class ReviewLoop {
         public String label() {
             return label;
         }
+
+        /** The one-word result shown in the summary: passed, hit a limit, undone, or stopped early. */
+        public String verdict() {
+            return switch (this) {
+                case CLEAN -> "通過";
+                case ROUNDS, TIME, TOKENS -> "上限到達";
+                case WORSE -> "悪化で undo";
+                case STUCK -> "同じ問題が残り中断";
+                case STOPPED -> "停止";
+                case FAILED -> "点検失敗";
+                default -> "点検なし";
+            };
+        }
     }
 
     private final ReviewLevel level;

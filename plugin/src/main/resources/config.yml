@@ -32,6 +32,9 @@ progress:
   #   continue (default)  keep running; the result is shown on their next join. Waiting prompts stay too.
   #   stop                cancel the running prompt and drop their waiting ones
   onQuit: continue
+  # One chat line per tool use (name + gist); runs of the same tool are folded into one.
+  # false = show only the bossbar. Bar then keeps to overall progress.
+  toolChat: true
 
 # Self-review after a build: Claude inspects the result with the existing tools, fixes problems and
 # re-checks. Stops when clean, when worse (the round is undone), or at the round / time / token limit.

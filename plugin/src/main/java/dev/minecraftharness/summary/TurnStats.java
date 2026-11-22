@@ -19,7 +19,11 @@ public final class TurnStats {
         }
     }
 
-    public record Review(int rounds, String stop, List<String> fixes, int found, int remaining) {}
+    /** One review round: problems seen, left after the fixes, fixed, and whether its edits were undone. */
+    public record Round(int number, int found, int remaining, int fixed, boolean undone) {}
+
+    public record Review(int rounds, String stop, List<String> fixes, int found, int remaining,
+                         List<Round> roundList, String verdict) {}
 
     private long input;
     private long output;
@@ -42,6 +46,8 @@ public final class TurnStats {
     private int found;
     private int remaining;
     private boolean reviewed;
+    private final List<Round> roundList = new ArrayList<>();
+    private String reviewVerdict = "";
 
     public synchronized void setModel(String model, String effort, String auth) {
         this.model = model == null ? "" : model;
@@ -86,6 +92,20 @@ public final class TurnStats {
         this.found += Math.max(0, found);
         this.remaining = Math.max(0, remaining);
         if (fix != null && !fix.isBlank()) fixes.add(fix.trim());
+        int f = Math.max(0, found);
+        int rem = Math.max(0, remaining);
+        roundList.add(new Round(reviewRounds, f, rem, Math.max(0, f - rem), false));
+    }
+
+    /** The last round made things worse and was rolled back. */
+    public synchronized void markLastRoundUndone() {
+        if (roundList.isEmpty()) return;
+        Round r = roundList.remove(roundList.size() - 1);
+        roundList.add(new Round(r.number(), r.found(), r.remaining(), r.fixed(), true));
+    }
+
+    public synchronized void setReviewVerdict(String verdict) {
+        this.reviewVerdict = verdict == null ? "" : verdict;
     }
 
     public synchronized void setReviewStop(String stop) {
@@ -149,6 +169,6 @@ public final class TurnStats {
     }
 
     public synchronized Review review() {
-        return reviewed ? new Review(reviewRounds, reviewStop, List.copyOf(fixes), found, remaining) : null;
+        return reviewed ? new Review(reviewRounds, reviewStop, List.copyOf(fixes), found, remaining, List.copyOf(roundList), reviewVerdict) : null;
     }
 }
