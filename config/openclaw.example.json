@@ -1,0 +1,137 @@
+{
+  "gateway": {
+    "mode": "local",
+    "port": 18789,
+    "bind": "loopback",
+    "auth": {
+      "mode": "none"
+    },
+    "http": {
+      "endpoints": {
+        "chatCompletions": {
+          "enabled": true
+        }
+      }
+    }
+  },
+  "plugins": {
+    "enabled": false
+  },
+  "models": {
+    "mode": "merge",
+    "providers": {
+      "cerebras": {
+        "baseUrl": "http://127.0.0.1:25582/v1",
+        "apiKey": "${CEREBRAS_API_KEY}",
+        "api": "openai-completions",
+        "timeoutSeconds": 300,
+        "models": [
+          {
+            "id": "moonshotai-kimi-k3.1-pro-trial",
+            "name": "Kimi K3.1 Pro (Cerebras Trial)",
+            "api": "openai-completions",
+            "reasoning": true,
+            "input": [
+              "text",
+              "image"
+            ],
+            "contextWindow": 131072,
+            "maxTokens": 16384,
+            "compat": {
+              "supportsReasoningEffort": true,
+              "supportedReasoningEfforts": [
+                "low",
+                "medium",
+                "high"
+              ],
+              "supportsDeveloperRole": false,
+              "supportsStrictMode": false,
+              "supportsTools": true,
+              "maxTokensField": "max_completion_tokens"
+            }
+          }
+        ]
+      },
+      "commandcode": {
+        "baseUrl": "http://127.0.0.1:25582/commandcode/v1",
+        "apiKey": "${CMD_API_KEY}",
+        "api": "openai-completions",
+        "timeoutSeconds": 300,
+        "models": [
+          {
+            "id": "moonshotai/Kimi-K3.1-Pro",
+            "name": "Kimi K3.1 Pro (Command Code)",
+            "api": "openai-completions",
+            "reasoning": true,
+            "input": [
+              "text",
+              "image"
+            ],
+            "contextWindow": 131072,
+            "maxTokens": 16384,
+            "compat": {
+              "supportsReasoningEffort": true,
+              "supportedReasoningEfforts": [
+                "low",
+                "medium",
+                "high"
+              ],
+              "supportsDeveloperRole": false,
+              "supportsStrictMode": false,
+              "supportsTools": true,
+              "maxTokensField": "max_completion_tokens"
+            }
+          }
+        ]
+      }
+    }
+  },
+  "agents": {
+    "defaults": {
+      "workspace": "__WORKSPACE_DIR__",
+      "model": {
+        "primary": "cerebras/moonshotai-kimi-k3.1-pro-trial"
+      },
+      "skipOptionalBootstrapFiles": [
+        "SOUL.md",
+        "USER.md",
+        "HEARTBEAT.md",
+        "IDENTITY.md"
+      ],
+      "startupContext": {
+        "enabled": false
+      },
+      "contextPruning": {
+        "mode": "cache-ttl",
+        "ttl": "5m"
+      },
+      "thinkingDefault": "low",
+      "reasoningDefault": "off"
+    }
+  },
+  "skills": {
+    "allowBundled": [
+      "minecraft-harness"
+    ]
+  },
+  "tools": {
+    "profile": "minimal",
+    "alsoAllow": [
+      "bundle-mcp",
+      "minecraft-harness__*"
+    ],
+    "deny": [
+      "session_status"
+    ]
+  },
+  "mcp": {
+    "servers": {
+      "minecraft-harness": {
+        "enabled": true,
+        "transport": "streamable-http",
+        "url": "http://127.0.0.1:25581/mcp",
+        "supportsParallelToolCalls": true
+      }
+    }
+  }
+}

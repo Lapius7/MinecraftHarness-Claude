@@ -1,0 +1,16 @@
+name: MinecraftHarness
+version: 0.1.0
+main: dev.minecraftharness.MinecraftHarnessPlugin
+api-version: '1.21'
+description: Real-time AI Minecraft building, VFX/SFX, and playable minigame harness powered by OpenClaw and Cerebras
+libraries:
+  - org.java-websocket:Java-WebSocket:1.5.7
+commands:
+  mh:
+    description: Control MinecraftHarness AI builder, telemetry HUD, film mode, camera rig, and undo/reset
+    usage: /mh <prompt|undo|reset|shift|film|hud|cam|fx|speed|status|stop|reasoning>
+    permission: minecraftharness.use
+permissions:
+  minecraftharness.use:
+    description: Allows using MinecraftHarness commands and ! chat prompts
+    default: op
