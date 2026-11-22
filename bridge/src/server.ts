@@ -354,7 +354,7 @@ function selectConfiguredModel(targetRaw: string): {
   saveOpenClawConfigObject(config);
 
   const warning = !match.hasApiKey && match.apiKeyEnv
-    ? `${match.apiKeyEnv} が未設定です。.env に ${match.apiKeyEnv}=<キー> を設定してください（Gatewayモード時は再起動が必要です）。`
+    ? `${match.apiKeyEnv} が未設定です。.env に ${match.apiKeyEnv}=<キー> を設定してください。`
     : undefined;
   return {
     ok: true,
@@ -675,9 +675,27 @@ async function main() {
     filmMode: boolean,
     force = false
   ): Promise<void> {
-    const clean = sanitizeChatReply(rawText);
+    let clean = sanitizeChatReply(rawText);
     if (!clean || filmMode || !mcClient.isConnected()) return;
-    if (!force && sentChatReplies.has(clean)) return;
+    if (!force) {
+      if (sentChatReplies.has(clean)) return;
+      if (sentChatReplies.size > 0) {
+        const prevList = Array.from(sentChatReplies);
+        if (prevList.join("\n\n") === clean || prevList.join("\n") === clean) return;
+        let remainder = clean;
+        for (const prev of prevList) {
+          if (remainder === prev) {
+            remainder = "";
+            break;
+          }
+          if (remainder.startsWith(prev + "\n") || remainder.startsWith(prev + "\r\n")) {
+            remainder = remainder.slice(prev.length).trim();
+          }
+        }
+        if (!remainder || sentChatReplies.has(remainder)) return;
+        clean = remainder;
+      }
+    }
     sentChatReplies.add(clean);
     await notifyPlayer(playerName, clean);
   }
@@ -792,6 +810,7 @@ async function main() {
   }
 
   function syncModelsToPlugin(): void {
+    telemetry.broadcastModelsUpdated();
     if (!mcClient.isConnected()) return;
     try {
       const payload = listConfiguredModels();

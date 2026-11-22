@@ -271,12 +271,12 @@ public final class MinecraftHarnessPlugin extends JavaPlugin implements Listener
             case "notify_status" -> {
                 String msg = params.has("message") ? params.get("message").getAsString() : "";
                 if (!cameraRig.isFilmMode() && !msg.isBlank()) {
-                    if (playerName == null) {
-                        broadcastStatus("§7[OpenClaw] §f" + msg);
-                    } else {
-                        Player recipient = Bukkit.getPlayerExact(playerName);
-                        if (recipient != null) recipient.sendMessage(Component.text("[OpenClaw] ", NamedTextColor.GRAY)
+                    Player recipient = (playerName != null && !playerName.isBlank()) ? Bukkit.getPlayerExact(playerName) : null;
+                    if (recipient != null) {
+                        recipient.sendMessage(Component.text("[OpenClaw] ", NamedTextColor.GRAY)
                             .append(Component.text(msg, NamedTextColor.WHITE)));
+                    } else {
+                        broadcastStatus("§7[OpenClaw] §f" + msg);
                     }
                 }
                 JsonObject r = new JsonObject();

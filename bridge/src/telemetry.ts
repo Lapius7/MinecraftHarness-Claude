@@ -704,6 +704,10 @@ export class TelemetryHub {
     this.broadcast("thinking_setting", { level });
   }
 
+  broadcastModelsUpdated(): void {
+    this.broadcast("models_updated", { ts: Date.now() });
+  }
+
   private broadcast(event: string, data: unknown): void {
     if (this.sseClients.size === 0) return;
     const frame = `event: ${event}\ndata: ${JSON.stringify(data)}\n\n`;
@@ -1046,13 +1050,22 @@ export function startCerebrasTelemetryProxy(
       delete headers["content-length"];
       // Force uncompressed identity encoding so SSE lines can be tee-parsed cleanly with zero gzip buffering
       headers["accept-encoding"] = "identity";
+      const rawAuth = typeof headers.authorization === "string" ? headers.authorization.trim() : "";
+      if (!rawAuth || /^Bearer\s*(\$\{[A-Z0-9_]+\})?$/i.test(rawAuth)) {
+        const envKeyName =
+          commandCode ? "CMD_API_KEY"
+          : openDesign ? "OPENDESIGN_API_KEY"
+          : openCodeGo ? "OPENCODE_GO_API_KEY"
+          : openRouter ? "OPENROUTER_API_KEY"
+          : (!reqPath.startsWith("/providers/") ? "CEREBRAS_API_KEY" : "");
+        if (envKeyName) {
+          const fallbackKey = loadEnvValue(envKeyName, opts.openclawStateDir);
+          if (fallbackKey) headers.authorization = `Bearer ${fallbackKey}`;
+        }
+      }
       if (openCodeGo) {
         if (!headers["x-opencode-session"]) {
           headers["x-opencode-session"] = opts.getActiveSessionId?.() || "minecraftharness-default-session";
-        }
-        if (!headers.authorization || headers.authorization === "Bearer " || headers.authorization === "Bearer") {
-          const fallbackKey = loadEnvValue("OPENCODE_GO_API_KEY", opts.openclawStateDir);
-          if (fallbackKey) headers.authorization = `Bearer ${fallbackKey}`;
         }
       } else if (openRouter) {
         if (!headers["http-referer"]) {
@@ -1109,14 +1122,14 @@ export function startCerebrasTelemetryProxy(
           (upstreamRes) => {
             const status = upstreamRes.statusCode ?? 500;
 
-            if (trace && status === 400 && !retriedWithoutEffort) {
+            if (trace && (status === 400 || status === 422) && !retriedWithoutEffort) {
               const parsedBody = (clientReq as unknown as { __mhParsedBody?: Record<string, unknown> | null }).__mhParsedBody;
               if (parsedBody && "reasoning_effort" in parsedBody) {
                 const errChunks: Buffer[] = [];
                 upstreamRes.on("data", (c: Buffer) => errChunks.push(c));
                 upstreamRes.on("end", () => {
                   const body400 = Buffer.concat(errChunks).toString("utf8");
-                  if (/reasoning_effort/i.test(body400) && /unsupported|invalid|unknown|not supported|unrecognized|extra/i.test(body400)) {
+                  if (/reasoning_effort/i.test(body400) && /unsupported|invalid|unknown|not supported|not allowed|does not support|unrecognized|extra/i.test(body400)) {
                     retriedWithoutEffort = true;
                     const stripped = { ...parsedBody };
                     delete stripped.reasoning_effort;

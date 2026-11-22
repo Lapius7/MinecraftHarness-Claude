@@ -407,6 +407,7 @@ export function renderDashboardHtml(): string {
         renderAll();
       });
       es.addEventListener("thinking_setting", (e) => { document.getElementById("thinkingSel").value = JSON.parse(e.data).level; });
+      es.addEventListener("models_updated", () => { loadModels(); });
       es.addEventListener("prompt_run", () => { preparing = true; updateKpis(); });
       es.addEventListener("preparation_end", () => { preparing = false; updateKpis(); });
       es.addEventListener("trace_start", (e) => {
