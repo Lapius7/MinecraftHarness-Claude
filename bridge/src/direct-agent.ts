@@ -304,7 +304,13 @@ export class DirectAgent {
           }
 
           const ctrl = new AbortController();
-          const timer = setTimeout(() => ctrl.abort(), cfg.timeoutMs);
+          const idleMs = Math.max(60_000, Math.min(cfg.timeoutMs, 300_000));
+          let idleTimer: NodeJS.Timeout | null = null;
+          const resetIdleTimer = () => {
+            if (idleTimer) clearTimeout(idleTimer);
+            idleTimer = setTimeout(() => ctrl.abort(), idleMs);
+          };
+          resetIdleTimer();
           try {
             const res = await fetch(`${cfg.baseUrl}/chat/completions`, {
               method: "POST",
@@ -312,6 +318,7 @@ export class DirectAgent {
               body: JSON.stringify(reqBody),
               signal: ctrl.signal,
             });
+            resetIdleTimer();
 
             if (!res.ok) {
               const errBody = await res.text().catch(() => "");
@@ -319,10 +326,10 @@ export class DirectAgent {
             } else if (!res.body) {
               return { ok: false, status: res.status, content: "", reasoningContent: "", toolCalls: [], errorText: "Empty response body" };
             } else {
-              return await this.consumeSseResponse(res.body, res.status);
+              return await this.consumeSseResponse(res.body, res.status, resetIdleTimer);
             }
           } finally {
-            clearTimeout(timer);
+            if (idleTimer) clearTimeout(idleTimer);
           }
         };
 
@@ -507,7 +514,8 @@ export class DirectAgent {
 
   private async consumeSseResponse(
     body: ReadableStream<Uint8Array>,
-    status: number
+    status: number,
+    onActivity?: () => void
   ): Promise<{
     ok: boolean;
     status: number;
@@ -526,6 +534,7 @@ export class DirectAgent {
     while (true) {
       const { value, done } = await reader.read();
       if (done) break;
+      onActivity?.();
       sseBuf += decoder.decode(value, { stream: true });
       let idx: number;
       while ((idx = sseBuf.indexOf("\n")) >= 0) {

@@ -127,6 +127,7 @@ export class TelemetryHub {
   private activeReasoningEffort = "low";
   private activeToolName: string | null = null;
   private lastHudEmitAt = 0;
+  private lastActivityAt = Date.now();
   private hudTimer: NodeJS.Timeout | null = null;
   private deltaTimers = new Map<string, NodeJS.Timeout>();
   private pendingDeltas = new Map<string, { trace: InferenceTrace; reasoning: string; content: string; toolsChanged: boolean }>();
@@ -175,7 +176,16 @@ export class TelemetryHub {
     this.inferenceDoneCallback = cb;
   }
 
+  touchActivity(): void {
+    this.lastActivityAt = Date.now();
+  }
+
+  getLastActivityAt(): number {
+    return this.lastActivityAt;
+  }
+
   beginPromptRun(playerName: string, prompt: string, thinking: string, receivedAt = Date.now()): void {
+    this.lastActivityAt = Date.now();
     this.receivedAt = receivedAt;
     this.runStartedAt = Date.now();
     this.dispatchAt = 0;
@@ -278,6 +288,7 @@ export class TelemetryHub {
   }
 
   markHeaders(trace: InferenceTrace, httpStatus: number): void {
+    this.lastActivityAt = Date.now();
     trace.httpStatus = httpStatus;
     trace.headersAt = Date.now();
     trace.elapsedMs = trace.headersAt - trace.startedAt;
@@ -299,6 +310,7 @@ export class TelemetryHub {
     if (!hasReasoning && !hasContent && !hasTools) {
       return;
     }
+    this.lastActivityAt = now;
 
     if (trace.firstTokenAt === null) {
       trace.firstTokenAt = now;
@@ -504,11 +516,13 @@ export class TelemetryHub {
   }
 
   markToolStart(toolName: string): void {
+    this.lastActivityAt = Date.now();
     this.activeToolName = toolName;
     this.scheduleHudEmit(false);
   }
 
   attachToolEvent(ev: ToolTraceEvent): void {
+    this.lastActivityAt = Date.now();
     this.activeToolName = null;
     const target = this.traces.find((t) => t.promptRunId === this.activePromptRunId) ?? this.traces[0];
     if (target) {

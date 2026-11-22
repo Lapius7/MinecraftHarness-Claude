@@ -389,11 +389,22 @@ async function applyThinking(key: string, level: string, model?: string) {
 async function runOpenClawGatewayHttpTurn(
   message: string,
   thinkingLevel: string,
-  activeSessionId: string
+  activeSessionId: string,
+  getLastActivityAt?: () => number
 ): Promise<{ ok: boolean; reply: string; elapsedMs: number; fallbackToCli?: boolean }> {
   const t0 = Date.now();
   const ctrl = new AbortController();
-  const timer = setTimeout(() => ctrl.abort(), 360000);
+  const IDLE_TIMEOUT_MS = 300_000; // 5 min of true silence (reset on every reasoning/output/tool chunk)
+  const MAX_RUN_MS = 1_800_000; // 30 min outer safety cap
+  let timedOut = false;
+  const watchdog = setInterval(() => {
+    const now = Date.now();
+    const lastAct = Math.max(t0, getLastActivityAt ? getLastActivityAt() : t0);
+    if (now - lastAct >= IDLE_TIMEOUT_MS || now - t0 >= MAX_RUN_MS) {
+      timedOut = true;
+      ctrl.abort();
+    }
+  }, 5000);
   try {
     const key = 'agent:main:' + activeSessionId;
     const modelHeaders = await configuredModelHeaders();
@@ -435,6 +446,14 @@ async function runOpenClawGatewayHttpTurn(
     const reply = typeof msg?.content === "string" ? msg.content.trim() : "";
     return { ok: true, reply, elapsedMs };
   } catch (err) {
+    if (timedOut) {
+      return {
+        ok: false,
+        reply: "AIの応答が一定時間途絶えたためタイムアウトしました。もう一度お試しください。",
+        elapsedMs: Date.now() - t0,
+        fallbackToCli: false,
+      };
+    }
     return {
       ok: false,
       reply: err instanceof Error ? err.message : String(err),
@@ -442,7 +461,7 @@ async function runOpenClawGatewayHttpTurn(
       fallbackToCli: true,
     };
   } finally {
-    clearTimeout(timer);
+    clearInterval(watchdog);
   }
 }
 
@@ -463,7 +482,7 @@ async function runOpenClawTurn(message: string, thinkingLevel: string, useLocalF
     "--thinking", thinkingLevel,
     "--message-file", msgFile,
     "--json",
-    "--timeout", "360"
+    "--timeout", "1800"
   );
 
   return new Promise((resolve) => {
@@ -476,10 +495,14 @@ async function runOpenClawTurn(message: string, thinkingLevel: string, useLocalF
       fs.rmSync(msgFile, { force: true });
       const elapsedMs = Date.now() - t0;
       if (code !== 0) {
+        const combined = (stderr + "\n" + stdout).trim();
+        const isTimeout = /"status"\s*:\s*"timeout"|timed out/i.test(combined);
         resolve({
           ok: false,
           elapsedMs,
-          reply: `OpenClaw exited with code ${code}: ${stderr.slice(0, 400) || stdout.slice(0, 400)}`,
+          reply: isTimeout
+            ? "AIの応答がタイムアウトしました。少し時間をおいてもう一度お試しください。"
+            : `OpenClaw exited with code ${code}: ${stderr.slice(0, 300) || stdout.slice(0, 300)}`,
           raw: stdout + stderr,
         });
         return;
@@ -763,7 +786,7 @@ async function main() {
       const gatewayOk = await ensureGateway();
       telemetry.markAgentDispatch();
       if (gatewayOk) {
-        const httpRes = await runOpenClawGatewayHttpTurn(userMessage, thinking, session.id);
+        const httpRes = await runOpenClawGatewayHttpTurn(userMessage, thinking, session.id, () => telemetry.getLastActivityAt());
         if (httpRes.fallbackToCli) {
           console.warn("[Bridge] Gateway HTTP unavailable, falling back to OpenClaw CLI:", httpRes.reply);
           res = await runOpenClawTurn(userMessage, thinking, false, session.id);

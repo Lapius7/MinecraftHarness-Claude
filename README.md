@@ -1,29 +1,34 @@
 # MinecraftHarness
 
-**Real-time AI Minecraft 1.21.4 building, VFX/SFX, and playable command-block / datapack minigame harness powered by OpenClaw.**  
-Type one line in chat (`!<prompt>`) and watch AI design original builds, interiors, and playable minigames right where you are looking—with **no client mods required** (vanilla Java 1.21.4 + optional Iris/shaders).
+**Real-time AI Minecraft (1.21.x / 26.x) building, VFX/SFX, and playable command-block / datapack minigame harness powered by OpenClaw—or standalone as a single drop-in JAR.**  
+Type one line in chat (`!<prompt>`) and watch AI design original builds, interiors, and playable minigames right where you are looking—with **no client mods required** (vanilla Java 1.21.x / 26.x + optional Iris/shaders).
 
 > **[日本語クイックスタート (Japanese Quick Start)](#日本語クイックスタート)** は下部にあります。
 
 ---
 
 ## Highlights
-- **OpenClaw Gateway Mode (Default) + Optional Direct Mode**: Runs on **OpenClaw** (`:18789`) over HTTP + in-memory Streamable HTTP MCP by default, and also supports standalone Direct Mode (`MH_AGENT_MODE=direct` or `.\restart-all.ps1 -Direct`) for zero-Gateway environments—with identical in-game HUD, VFX, and telemetry. Works with Cerebras, Command Code, OpenAI, OpenRouter, Groq, or any OpenAI Chat Completions-compatible provider.
-- **Streaming Speculative Execution**: Incrementally parses streamed tool-call JSON as tokens arrive and starts placing blocks in PaperMC **while the model is still generating**.
+- **Hybrid Architecture — Single-JAR Standalone + OpenClaw Gateway Mode**:
+  - **Drop-in Single-JAR Mode**: Just drop `MinecraftHarness-*.jar` into your PaperMC / Purpur `plugins/` folder (1.21.0–1.21.x & 26.x) and run `/mh key <provider> <API_KEY>`—the built-in Java 21 agent runs with **zero Node.js or external processes required**.
+  - **OpenClaw Gateway + Live Dashboard Mode**: When the Node.js Bridge is connected (`.\restart-all.ps1`), the plugin automatically delegates to **OpenClaw** (`:18789`) over HTTP + in-memory Streamable HTTP MCP (or `.\restart-all.ps1 -Direct`). Works with Cerebras, OpenCode Go, OpenRouter, OpenDesign Go, Command Code, or any OpenAI-compatible provider.
+- **Streaming Speculative Execution & Activity-Aware Timeouts**:
+  - Incrementally parses streamed tool-call JSON as tokens arrive and starts placing blocks in PaperMC **while the model is still generating** (in both Bridge and standalone JAR modes).
+  - Activity-based idle timeout resets on every streamed reasoning/output/tool chunk, so long multi-step reasoning builds are never cut off mid-stream.
 - **Player Gaze Anchor & Persistent `anchorId`**: Captures raycast `lookTarget`, nearest-cardinal `(right, up, forward)` local coordinate basis, terrain heightmap, and `recentStructures` (`s1`, `s2`, ...) so follow-up edits target the exact build even after you walk around.
 - **Expressive Geometry & Space Tools (No Canned Templates)**:
   - Full geometric primitive suite (`box`, `hollow_box`, `pillar`, `cylinder`, `dome`, `arch`, `stairs_run`, `bridge`, `spiral`, `ring`, `scatter`, `pattern`, `blocks`, `clear`)
   - Universal **`mirrorX`** (auto-flips directional facing & double-door hinges) and **`repeat`** modifiers on any op
   - **3D Region `move` / `shift` / `copy`** (plus `/mh shift <du>` / `/mh shift <dr> <du> <df>`) with 2-phase snapshot-first shifting so overlapping moves (e.g. lowering a build by 3 blocks) never corrupt blocks and remain fully undoable
-  - **Physical Auto-Fixers**: Auto-completes upper door halves & double-door hinges, bed heads, 2-block tall flora, stair headroom clearance (`autoHeadroom`), and common 1.21.4 block-state aliases
+  - **Physical Auto-Fixers**: Auto-completes upper door halves & double-door hinges, bed heads, 2-block tall flora, stair headroom clearance (`autoHeadroom`), and common 1.21+ block-state aliases
 - **Playable Command Blocks & Datapacks**:
-  - Automatic Impulse/Repeating/Chain command block wiring (`auto:1b`, `{{REL r u f}}` coordinate macros, glass Command Core, arena triggers) and persistent `mc_function_pack` datapacks
-  - 1ms live Mojang **Brigadier** syntax validation on PaperMC 1.21.4
-- **Cinematic VFX / SFX & Recording Tools**:
+  - Automatic Impulse/Repeating/Chain command block wiring (`auto:1b`, `{{REL r u f}}` coordinate macros, glass Command Core, arena triggers) and persistent `mc_function_pack` datapacks (1.21.0–1.21.x & 26.x `pack_format` auto-detected)
+  - 1ms live Mojang **Brigadier** syntax validation
+- **Cinematic VFX / SFX, Live HUD & Recording Tools**:
   - Hovering constructor drones firing particle lasers, FPS-capped `BlockDisplay` pop-in animations, pentatonic amethyst chimes, persistent `illumination` particle presets
+  - Live BossBar telemetry showing phase, TTFT, tok/s, **live output token count**, cache hit %, and reasoning breakdown—plus per-step in-game chat replies (even during multi-step tool loops) and accurate runtime badges (`[OpenClaw]` / `[Direct AI]` / `[AI]`)
   - `/mh film on` clean recording HUD & `/mh cam orbit|dolly` camera rigs
 - **Live Telemetry & Vision Dashboard (`http://127.0.0.1:25581/`)**:
-  - Real-time streaming reasoning viewer, TTFT / queue / prompt / completion timing, Server TPS & E2E TPS, Prompt Cache Hit %, and captured `mc_take_photo` screenshots
+  - Real-time streaming reasoning viewer, TTFT / queue / prompt / completion timing, Server TPS & E2E TPS, Prompt Cache Hit %, live-synced model/thinking dropdowns, and captured `mc_take_photo` screenshots
 
 ---
 
@@ -141,7 +146,8 @@ Put `MY_PROVIDER_API_KEY=...` in `.env` and select it with `.\set-provider.ps1 m
 ## In-Game Commands
 - `!<prompt>` or `/mh <prompt>` — Build, edit, or create minigames at your gaze target
 - `/mh model [name]` — Show clickable model selector in chat or switch active provider/model live (e.g. `/mh model cerebras`, `/mh model opendesign`, `/mh model opencode-go`, `/mh model openrouter/deepseek/deepseek-v3.2`)
-- `!new` — Reset conversation history for your player
+- `/mh key <provider> <api-key>` — Save a provider API key to `plugins/MinecraftHarness/config.yml` for Standalone Single-JAR Mode
+- `!new` / `/mh session list|use <name>` — Reset or switch conversation sessions for your player
 - `/mh undo` / `/mh reset` — Restore terrain & remove spawned entities cleanly
 - `/mh shift <du>` / `/mh shift <dr> <du> <df>` — Shift the most recent structure by an offset (e.g. `/mh shift -3` lowers it by 3 blocks)
 - `/mh film on|off` — Clean recording mode (hides BossBar/ActionBar HUD, chat echoes, and command feedback)
@@ -199,13 +205,15 @@ Put `MY_PROVIDER_API_KEY=...` in `.env` and select it with `.\set-provider.ps1 m
   !全体を2ブロック下げて
   ```
 - **よく使うコマンド**:
+  - `/mh key <provider> <APIキー>` — JAR 単体モード用の API キーを設定（`cerebras` / `opencode-go` / `openrouter` / `opendesign` / `commandcode`）
   - `/mh model` — チャット上のクリックメニューで AI モデルを即切替（`/mh model openrouter/<任意のモデルID>` や `/mh model opencode-go/<モデルID>` も可）
   - `/mh undo` — 直前の建築・エンティティをきれいに元に戻す
   - `/mh shift -3` — 直前の建築を丸ごと下へ 3 ブロック移動（`/mh shift <右> <上> <前>`）
   - `!new` — 会話履歴をリセットして新しい話題に切り替える
   - `/mh reasoning <off|low|medium|high>` — AI の思考量（`reasoning_effort`）を変更
   - `/mh film on` / `/mh cam orbit` — 録画向けの HUD 非表示・自動周回カメラ
-- **ライブダッシュボード**: ブラウザで **`http://127.0.0.1:25581/`** を開くと、AIの思考テキスト・TTFT・TPS・キャッシュヒット率・スクショ・モデル切替をリアルタイムで確認できます。
+  - `/mh status` / `/mh stop` — 現在の動作モード（`OpenClaw` / `Direct AI` / `Standalone`）確認やビルド中断
+- **ライブダッシュボード**: ブラウザで **`http://127.0.0.1:25581/`** を開くと、AIの思考テキスト・TTFT・TPS・出力トークン数・キャッシュヒット率・スクショ・モデル切替をリアルタイムで確認できます（推論やツール呼び出しが動いている間はタイムアウトで切れないアイドル監視方式）。
 
 ---
 
