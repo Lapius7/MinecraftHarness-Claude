@@ -10,7 +10,7 @@ public final class ReviewPrompt {
         sb.append("[レビュー ").append(round).append('/').append(maxLabel).append("] いま建てたものを点検して、必要なら直してください。\n");
         sb.append("元の依頼: ").append(originalRequest).append('\n');
         if (anchorHint != null && !anchorHint.isBlank()) sb.append("対象の建築: ").append(anchorHint).append('\n');
-        sb.append("点検には mc_voxel_snapshot、mc_take_photo、mc_inspect_world を使い、見ていないことを「問題なし」と書かないでください。\n");
+        sb.append("点検には mc_take_photo と mc_inspect_world を使い、見ていないことを「問題なし」と書かないでください。\n");
         sb.append("見ること: 依頼との一致、形と比率、窓やドアの穴、浮いているブロック、内装と庭の有無、地形とのなじみ");
         sb.append("、コマンドブロックやミニゲームがあれば動作。\n");
         if (level.strictChecklist()) {
