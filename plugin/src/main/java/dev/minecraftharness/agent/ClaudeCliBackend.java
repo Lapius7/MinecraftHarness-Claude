@@ -36,6 +36,12 @@ public final class ClaudeCliBackend {
     private final String systemPrompt;
     private final AtomicInteger callCounter;
     private final AtomicReference<Process> active = new AtomicReference<>();
+    private volatile StreamDebugLog debug = new StreamDebugLog(null);
+
+    /** Null disables the raw stream log. */
+    public void setDebugFile(File f) {
+        debug = new StreamDebugLog(f);
+    }
 
     public ClaudeCliBackend(ToolHost host, String systemPrompt, AtomicInteger callCounter) {
         this.host = host;
@@ -164,6 +170,7 @@ public final class ClaudeCliBackend {
             Outcome o = runOnce(cfg, in, callNo, effort, withEffort, resume);
             if (in.cancelled().getAsBoolean()) {
                 host.notifyChat(player, "ビルドを中断しました。", in.filmMode());
+                host.progress().cancelRunning(player, "/mh stop で停止");
                 return;
             }
             if (o.ok) {
@@ -181,8 +188,10 @@ public final class ClaudeCliBackend {
             }
             if (o.authFailed) {
                 host.notifyChat(player, "claude CLI にログインしていません。サーバー上で `claude` を起動して `/login` を実行してください。", false);
+                host.progress().fail(player, "claude CLI 未ログイン");
             } else {
                 host.notifyChat(player, "claude CLI でエラーが出ました: " + ToolHost.truncate(o.error == null ? "" : o.error, 300), false);
+                host.progress().fail(player, "claude CLI エラー");
             }
             return;
         }
@@ -209,6 +218,8 @@ public final class ClaudeCliBackend {
                 "`" + cfg.binary() + "` を起動できません(" + ex.getMessage() + ")。claude CLI をインストールするか MH_CLAUDE_BIN で場所を指定してください。");
         }
         active.set(proc);
+        final StreamDebugLog dbg = debug;
+        dbg.line("start", "pid=" + proc.pid() + " player=" + player + " resume=" + resume + " effort=" + (withEffort ? effort : "-"));
 
         long[] lastActivity = {System.currentTimeMillis()};
         boolean[] timedOut = {false};
@@ -238,6 +249,7 @@ public final class ClaudeCliBackend {
             try (BufferedReader r = new BufferedReader(new InputStreamReader(proc.getErrorStream(), StandardCharsets.UTF_8))) {
                 String l;
                 while ((l = r.readLine()) != null) {
+                    dbg.line("stderr", l);
                     if (stderr.length() < 4000) stderr.append(l).append('\n');
                 }
             } catch (IOException ignored) {
@@ -271,6 +283,8 @@ public final class ClaudeCliBackend {
             while ((line = r.readLine()) != null) {
                 lastActivity[0] = System.currentTimeMillis();
                 if (line.isBlank()) continue;
+                dbg.line("out", line.length() > 4000 ? line.substring(0, 4000) + "…" : line);
+                    host.progress().activity(player);
                 JsonObject j;
                 try {
                     JsonElement el = JsonParser.parseString(line);
@@ -296,6 +310,7 @@ public final class ClaudeCliBackend {
                             if ("tool_use".equals(str(cb, "type"))) {
                                 phase = "TOOL_CALLING";
                                 activeTool = str(cb, "name").replace(TOOL_PREFIX, "");
+                                host.progress().toolStreaming(player, activeTool);
                             }
                         } else if ("content_block_delta".equals(et) && ev.has("delta") && ev.get("delta").isJsonObject()) {
                             JsonObject d = ev.getAsJsonObject("delta");
@@ -305,11 +320,13 @@ public final class ClaudeCliBackend {
                                 reasoning.append(t);
                                 chars += t.length();
                                 phase = "REASONING";
+                                host.progress().thinking(player);
                             } else if ("text_delta".equals(dt)) {
                                 String t = str(d, "text");
                                 answer.append(t);
                                 chars += t.length();
                                 phase = "RESPONDING";
+                                host.progress().responding(player, (int) Math.round(chars / 3.6));
                             } else if ("input_json_delta".equals(dt)) {
                                 chars += str(d, "partial_json").length();
                                 phase = "TOOL_CALLING";
@@ -355,6 +372,7 @@ public final class ClaudeCliBackend {
         int exit = -1;
         try {
             exit = proc.waitFor();
+            dbg.line("exit", "code=" + exit + " timedOut=" + timedOut[0] + " cancelled=" + in.cancelled().getAsBoolean());
         } catch (InterruptedException ie) {
             Thread.currentThread().interrupt();
             killTree(proc);

@@ -17,7 +17,8 @@ import java.util.Locale;
 public final class TelemetryHud {
 
     private final BossBar bossBar;
-    private boolean hudEnabled = true;
+    /** Off by default: the per-player progress bar is the main display; this is the detailed telemetry for all players. */
+    private boolean hudEnabled = false;
     private boolean reasoningEnabled = true;
     private boolean visible = false;
     private long hideAfterMs = -1L;

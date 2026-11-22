@@ -16,7 +16,9 @@ import dev.minecraftharness.context.SpatialContextProvider.BuildAnchor;
 import dev.minecraftharness.context.SpatialContextProvider.StructureRecord;
 import dev.minecraftharness.fx.CameraRig;
 import dev.minecraftharness.fx.MarkdownChatRenderer;
+import dev.minecraftharness.fx.ProgressDisplay;
 import dev.minecraftharness.fx.TelemetryHud;
+import dev.minecraftharness.progress.ProgressMode;
 import dev.minecraftharness.fx.VfxEngine;
 import io.papermc.paper.event.player.AsyncChatEvent;
 import net.kyori.adventure.text.Component;
@@ -66,6 +68,7 @@ public final class MinecraftHarnessPlugin extends JavaPlugin implements Listener
     private CommandWirer commandWirer;
     private CameraRig cameraRig;
     private TelemetryHud telemetryHud;
+    private ProgressDisplay progressDisplay;
     private HarnessAgent agent;
 
     private static final String PERM_USE = "minecraftharness.use";
@@ -86,6 +89,8 @@ public final class MinecraftHarnessPlugin extends JavaPlugin implements Listener
         this.cameraRig = new CameraRig();
         this.telemetryHud = new TelemetryHud();
         this.agent = new HarnessAgent(this, this::handleSyncWsAction);
+        this.progressDisplay = new ProgressDisplay(agent.host().progress(),
+            ProgressMode.parseOrDefault(getConfig().getString("progress.mode", ProgressMode.DEFAULT.id())));
 
         getLogger().info("Brigadier validator status: " + commandWirer.getBrigadierStatus());
 
@@ -111,6 +116,8 @@ public final class MinecraftHarnessPlugin extends JavaPlugin implements Listener
             cameraRig.tick();
             telemetryHud.tick(cameraRig.isFilmMode());
         }, 1L, 1L);
+        // Progress bars redraw once a second (elapsed time) on the main thread.
+        Bukkit.getScheduler().runTaskTimer(this, () -> progressDisplay.tick(cameraRig.isFilmMode()), 20L, 20L);
 
         getLogger().info("MinecraftHarness enabled. Active model: " + agent.activeModel().ref());
     }
@@ -122,6 +129,12 @@ public final class MinecraftHarnessPlugin extends JavaPlugin implements Listener
         if (vfxEngine != null) vfxEngine.cleanupAll();
         if (cameraRig != null) cameraRig.stopAll();
         if (telemetryHud != null) telemetryHud.cleanup();
+        if (progressDisplay != null) progressDisplay.cleanup();
+    }
+
+    @EventHandler(priority = EventPriority.MONITOR)
+    public void onPlayerQuit(org.bukkit.event.player.PlayerQuitEvent event) {
+        if (progressDisplay != null) progressDisplay.clear(event.getPlayer());
     }
 
     @EventHandler(priority = EventPriority.HIGHEST, ignoreCancelled = true)
@@ -137,7 +150,18 @@ public final class MinecraftHarnessPlugin extends JavaPlugin implements Listener
         }
 
         String prompt = text.substring(1).trim();
-        Bukkit.getScheduler().runTask(this, () -> dispatchPrompt(player, prompt));
+        boolean urgent = false;
+        if (prompt.equalsIgnoreCase("now") || prompt.toLowerCase(Locale.ROOT).startsWith("now ")) {
+            urgent = true;
+            prompt = prompt.substring(3).trim();
+            if (prompt.isEmpty()) {
+                player.sendMessage(Component.text("使い方: !now <プロンプト>(実行中の依頼を止めて、これを先に実行します)", NamedTextColor.AQUA));
+                return;
+            }
+        }
+        final String p2 = prompt;
+        final boolean u2 = urgent;
+        Bukkit.getScheduler().runTask(this, () -> dispatchPrompt(player, p2, u2));
     }
 
     @EventHandler(priority = EventPriority.HIGHEST, ignoreCancelled = true)
@@ -162,6 +186,10 @@ public final class MinecraftHarnessPlugin extends JavaPlugin implements Listener
     }
 
     private void dispatchPrompt(Player player, String prompt) {
+        dispatchPrompt(player, prompt, false);
+    }
+
+    private void dispatchPrompt(Player player, String prompt, boolean urgent) {
         String convo = agent.handleConversationCommand(player.getName(), prompt);
         if (convo != null) {
             player.sendMessage(Component.text(convo, NamedTextColor.AQUA));
@@ -170,13 +198,31 @@ public final class MinecraftHarnessPlugin extends JavaPlugin implements Listener
 
         BuildAnchor anchor = contextProvider.captureAnchor(player.getName());
         ModelCatalog.Model model = agent.activeModel();
-        if (cameraRig.isFilmMode()) {
-            player.sendActionBar(Component.text("⚡ " + prompt, NamedTextColor.AQUA));
-        } else {
-            player.sendMessage(Component.text("⚡ " + model.ref() + " (" + reasoningMode + "): ", NamedTextColor.AQUA)
-                .append(Component.text(prompt, NamedTextColor.WHITE)));
+        // The prompt is already on screen as the player's own chat line, so it is not echoed back.
+        // The progress bar acknowledges it; with the bar off, a short line stands in for it.
+        if (!cameraRig.isFilmMode() && progressDisplay.mode() == ProgressMode.OFF) {
+            player.sendMessage(Component.text("⚡ 受付: " + model.ref() + " (" + reasoningMode + ")", NamedTextColor.AQUA));
         }
-        agent.enqueuePrompt(player.getName(), prompt, cameraRig.isFilmMode(), reasoningMode, anchor);
+        HarnessAgent.Enqueued r = agent.enqueuePrompt(player.getName(), prompt, cameraRig.isFilmMode(), reasoningMode, anchor, urgent);
+        switch (r.status()) {
+            case DUPLICATE -> player.sendMessage(Component.text("⚡ 同じ依頼がすでに実行中か待ち中です。重複は無視しました。", NamedTextColor.YELLOW));
+            case FULL -> player.sendMessage(Component.text("⚡ 待ちが上限(" + r.limit() + " 件)に達しています。終わるまで待つか、/mh queue clear で待ちを消してください。", NamedTextColor.RED));
+            case STOPPED -> { }
+            case ACCEPTED -> {
+                if (urgent) {
+                    stopBuildSide();
+                    player.sendMessage(Component.text("⚡ 実行中の依頼を止めて、これを先に実行します。", NamedTextColor.YELLOW));
+                } else if (r.position() > 0) {
+                    player.sendMessage(Component.text("⚡ 前の依頼が終わってから実行します(待ち: " + r.position() + " 番目)", NamedTextColor.YELLOW));
+                }
+            }
+        }
+        progressDisplay.tick(cameraRig.isFilmMode());
+    }
+
+    /** Clears the build queue and effects that belong to an interrupted run. */
+    private void stopBuildSide() {
+        buildPacer.stopNow();
     }
 
     /** Older configs used off/minimal; both mean the lowest effort now. */
@@ -618,15 +664,54 @@ public final class MinecraftHarnessPlugin extends JavaPlugin implements Listener
                 sender.sendMessage("§aReset all session builds (§f" + r.get("restoredBlocks").getAsInt() + " blocks restored§a).");
             }
             case "stop" -> {
-                agent.cancelActive();
+                boolean all = args.length >= 2 && "all".equalsIgnoreCase(args[1]);
+                agent.stop(all);
+                if (all || agent.pendingCount() == 0) progressDisplay.clearAll();
                 buildPacer.stopNow();
-                sender.sendMessage("§eStopped active AI run, build queue, and VFX.");
+                sender.sendMessage(all
+                    ? "§e実行中の依頼、待ち、建築キュー、演出をすべて止めました。"
+                    : "§e実行中の依頼、建築キュー、演出を止めました。待ちは残っています(全部消すなら /mh stop all)。");
+            }
+            case "now" -> {
+                if (!(sender instanceof Player p)) {
+                    sender.sendMessage("Players only.");
+                } else if (args.length < 2) {
+                    sender.sendMessage("§b使い方: §f/mh now <プロンプト> §7(実行中の依頼を止めて、これを先に実行)");
+                } else {
+                    dispatchPrompt(p, String.join(" ", java.util.Arrays.copyOfRange(args, 1, args.length)), true);
+                }
+            }
+            case "queue" -> {
+                if (args.length >= 2 && "clear".equalsIgnoreCase(args[1])) {
+                    int n = agent.clearQueue(sender.getName());
+                    sender.sendMessage("§e自分の待ちを " + n + " 件消しました。");
+                } else {
+                    List<String> lines = agent.queueLines();
+                    sender.sendMessage(lines.isEmpty() ? "§7実行中の依頼も待ちもありません。" : "§b依頼の順番:");
+                    for (String l : lines) sender.sendMessage("§7 " + l);
+                }
             }
             case "film" -> {
                 boolean next = args.length >= 2 ? "on".equalsIgnoreCase(args[1]) : !cameraRig.isFilmMode();
                 cameraRig.setFilmMode(next);
                 telemetryHud.tick(next);
                 sender.sendMessage("§bFilm Mode: " + (next ? "§aON (clean recording HUD)" : "§7OFF"));
+            }
+            case "progress" -> {
+                if (args.length < 2) {
+                    sender.sendMessage("§b進捗表示: §f" + progressDisplay.mode().id() + " §7(bossbar / actionbar / off)");
+                    return true;
+                }
+                if (!requireAdmin(sender)) return true;
+                var next = ProgressMode.parse(args[1]);
+                if (next.isEmpty()) {
+                    sender.sendMessage("§e使い方: /mh progress <bossbar|actionbar|off>");
+                    return true;
+                }
+                progressDisplay.setMode(next.get());
+                getConfig().set("progress.mode", next.get().id());
+                saveConfig();
+                sender.sendMessage("§b進捗表示: §a" + next.get().id());
             }
             case "hud" -> {
                 if (args.length >= 2 && "reasoning".equalsIgnoreCase(args[1])) {
@@ -749,7 +834,7 @@ public final class MinecraftHarnessPlugin extends JavaPlugin implements Listener
                 sender.sendMessage("§7モデル: §f" + agent.statusLine());
                 sender.sendMessage("§7Brigadier: §f" + commandWirer.getBrigadierStatus());
                 sender.sendMessage("§7思考レベル: §f" + reasoningMode + " §7| 建築速度: §f" + buildPacer.getSpeedMode());
-                sender.sendMessage("§bFilm Mode: §f" + cameraRig.isFilmMode() + " §7| HUD: §f" + telemetryHud.isHudEnabled() + " §7| VFX: §f" + vfxEngine.isFxEnabled() + " §7| SFX: §f" + vfxEngine.isSoundEnabled());
+                sender.sendMessage("§bFilm Mode: §f" + cameraRig.isFilmMode() + " §7| HUD: §f" + telemetryHud.isHudEnabled() + " §7| 進捗: §f" + progressDisplay.mode().id() + " §7| VFX: §f" + vfxEngine.isFxEnabled() + " §7| SFX: §f" + vfxEngine.isSoundEnabled());
                 sender.sendMessage("§7残りブロック: §f" + buildPacer.getRemainingCount());
             }
             case "speed" -> {
@@ -827,7 +912,7 @@ public final class MinecraftHarnessPlugin extends JavaPlugin implements Listener
     public List<String> onTabComplete(CommandSender sender, Command command, String alias, String[] args) {
         boolean admin = sender.hasPermission(PERM_ADMIN);
         if (args.length == 1) {
-            List<String> subs = new ArrayList<>(List.of("help", "effort", "model", "undo", "shift", "film", "hud", "cam", "fx", "speed",
+            List<String> subs = new ArrayList<>(List.of("help", "effort", "model", "undo", "shift", "film", "hud", "progress", "cam", "fx", "speed",
                 "session", "history", "new", "claude", "stop", "status"));
             if (admin) subs.addAll(List.of("key", "reset"));
             return filterPrefix(subs, args[0]);
@@ -839,6 +924,9 @@ public final class MinecraftHarnessPlugin extends JavaPlugin implements Listener
                 case "claude" -> List.of("clear");
                 case "film", "fx" -> List.of("on", "off", "sound");
                 case "hud" -> List.of("on", "off", "reasoning");
+                case "progress" -> ProgressMode.ids();
+                case "stop" -> List.of("all");
+                case "queue" -> List.of("clear");
                 case "cam" -> List.of("orbit", "dolly", "off");
                 case "history" -> List.of("reset");
                 case "session" -> List.of("list", "use");

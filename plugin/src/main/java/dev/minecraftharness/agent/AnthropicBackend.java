@@ -152,6 +152,7 @@ public final class AnthropicBackend {
             for (int step = 0; step < cfg.maxSteps(); step++) {
                 if (in.cancelled().getAsBoolean()) {
                     host.notifyChat(player, "ビルドを中断しました。", in.filmMode());
+                    host.progress().cancelRunning(player, "/mh stop で停止");
                     if (!anyStepDone) history.truncateTo(rollbackTo);
                     return;
                 }
@@ -162,6 +163,7 @@ public final class AnthropicBackend {
                     res = streamOnce(cfg, in, callNo, effort, withThinking);
                     if (res.ok) break;
                     if (in.cancelled().getAsBoolean()) {
+                        host.progress().cancelRunning(player, "/mh stop で停止");
                         if (!anyStepDone) history.truncateTo(rollbackTo);
                         return;
                     }
@@ -179,6 +181,7 @@ public final class AnthropicBackend {
                     host.notifyChat(player, res.status == 0
                         ? "Anthropic API に接続できませんでした: " + ToolHost.truncate(String.valueOf(res.errorBody), 200)
                         : describeError(res.status, res.errorBody), false);
+                    host.progress().fail(player, res.status == 0 ? "API に接続できません" : "API エラー " + res.status);
                     if (!anyStepDone) history.truncateTo(rollbackTo);
                     return;
                 }
@@ -193,8 +196,10 @@ public final class AnthropicBackend {
                 if (uses.isEmpty() || !"tool_use".equals(s.stopReason())) {
                     if ("max_tokens".equals(s.stopReason())) {
                         host.notifyChat(player, "出力が長すぎて途中で切れました。依頼を小分けにしてください。", in.filmMode());
+                        host.progress().fail(player, "出力が長すぎて途中で切れました");
                     } else if ("refusal".equals(s.stopReason())) {
                         host.notifyChat(player, "モデルがこの依頼を断りました。", in.filmMode());
+                        host.progress().fail(player, "モデルが断りました");
                     }
                     // Any tool_use in a truncated message still needs an answer to keep history valid.
                     history.closePendingToolUses("Turn ended before this tool ran.");
@@ -223,6 +228,7 @@ public final class AnthropicBackend {
 
                 if (in.cancelled().getAsBoolean()) {
                     host.notifyChat(player, "ビルドを中断しました。", in.filmMode());
+                    host.progress().cancelRunning(player, "/mh stop で停止");
                     return;
                 }
                 // Everything worked, nothing needs a look at the result, and the player already got
@@ -233,6 +239,7 @@ public final class AnthropicBackend {
                 }
             }
             host.notifyChat(player, "ステップ上限(" + cfg.maxSteps() + ")に達したので止めました。続きは「続けて」と送ってください。", in.filmMode());
+            host.progress().fail(player, "ステップ上限");
             history.closePendingToolUses("Step limit reached.");
         } finally {
             history.closePendingToolUses("Turn ended before this tool ran.");
@@ -293,6 +300,7 @@ public final class AnthropicBackend {
             }
 
             @Override public void onThinkingDelta(String t) {
+                host.progress().thinking(player);
                 reasoning.append(t);
                 chars[0] += t.length();
                 phase[0] = "REASONING";
@@ -300,6 +308,7 @@ public final class AnthropicBackend {
             }
 
             @Override public void onTextDelta(String t) {
+                host.progress().responding(player, (int) Math.round((chars[0] + t.length()) / 3.6));
                 answer.append(t);
                 chars[0] += t.length();
                 phase[0] = "RESPONDING";
@@ -308,6 +317,7 @@ public final class AnthropicBackend {
 
             @Override public void onToolStart(int index, String id, String name) {
                 phase[0] = "TOOL_CALLING";
+                host.progress().toolStreaming(player, name);
                 if ("mc_build_batch".equals(name)) extractors.put(index, new StreamingOpExtractor());
                 tick();
             }

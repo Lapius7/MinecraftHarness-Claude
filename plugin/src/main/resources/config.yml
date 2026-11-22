@@ -15,6 +15,32 @@ activeModel: cli/opus
 # The old key `reasoning` is still read when `effort` is missing.
 effort: low
 
+# Progress display for the player who sent a prompt, from the moment it is accepted until the reply ends.
+# Shows waiting / thinking / answering / running a tool / building, elapsed seconds, and a notice
+# when nothing has arrived for 30 seconds.
+#   bossbar    a bar at the top of the screen (default)
+#   actionbar  one line above the hotbar
+#   off        no display (a one-line acknowledgement is sent to chat instead)
+# Change in game with /mh progress <bossbar|actionbar|off> (needs minecraftharness.admin).
+# Film mode (/mh film on) always hides it.
+progress:
+  mode: bossbar
+
+# Tone of Claude's replies in game.
+#   friendly  a helpful, relaxed tone; after a build it says what it made, offers 2-3 next ideas
+#             and invites fixes (default)
+#   concise   one or two short sentences, no suggestions
+# Applied at startup (restart or /reload after changing).
+agent:
+  tone: friendly
+
+# Prompts sent while another is running wait their turn, one at a time.
+# maxPerPlayer is how many a player may have running + waiting; more are refused.
+# Same text as the player's latest prompt is ignored. !now <prompt> or /mh now <prompt> stops the
+# player's own running prompt and runs the new one first. /mh stop keeps the waiting ones, /mh stop all clears them.
+queue:
+  maxPerPlayer: 5
+
 # Maximum tool-calling rounds per prompt (API mode)
 maxSteps: 12
 
@@ -30,6 +56,9 @@ claude:
   binary: ""
   # Stop the CLI when it prints nothing for this long
   idleTimeoutSeconds: 300
+  # true: write the raw stream-json lines, process start/exit and stderr to
+  # plugins/MinecraftHarness/logs/cli-stream.log (for finding why a request is slow or stuck).
+  debugLog: false
 
 mcp:
   # Local port of the tool server that the claude CLI connects to (127.0.0.1 only).
