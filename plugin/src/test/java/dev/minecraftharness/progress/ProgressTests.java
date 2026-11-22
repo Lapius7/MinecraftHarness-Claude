@@ -180,4 +180,27 @@ class ProgressTests {
         assertTrue(ProgressMode.parse("x").isEmpty());
         assertEquals(java.util.List.of("bossbar", "actionbar", "off"), ProgressMode.ids());
     }
+
+    @Test void cancelRunningKeepsDisplayWhenPromptsWait() {
+        ProgressTracker t = new ProgressTracker(now::get);
+        ProgressState a = t.begin("Steve");
+        t.begin("Steve");
+        t.cancelRunning("Steve", "stop");
+        assertFalse(a.isFinished());
+        t.finish("Steve"); // the stopped turn returns, the waiting one takes over
+        assertEquals(ProgressState.Phase.WAITING, a.phase());
+        t.cancelRunning("Steve", "stop");
+        assertEquals(ProgressState.Phase.CANCELLED, a.phase());
+    }
+
+    @Test void dropQueuedCountsDownThenEnds() {
+        ProgressTracker t = new ProgressTracker(now::get);
+        ProgressState a = t.begin("Steve");
+        t.begin("Steve");
+        t.dropQueued("Steve", "x");
+        assertEquals(0, a.queued());
+        assertFalse(a.isFinished());
+        t.dropQueued("Steve", "x");
+        assertEquals(ProgressState.Phase.CANCELLED, a.phase());
+    }
 }

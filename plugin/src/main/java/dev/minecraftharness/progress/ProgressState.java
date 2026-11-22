@@ -136,6 +136,19 @@ public final class ProgressState {
         end(Phase.CANCELLED, why);
     }
 
+    /** Stops the current prompt only; with prompts waiting behind it the next one takes over via {@link #finish()}. */
+    public synchronized void cancelRunning(String why) {
+        if (isFinishedLocked() || queued > 0) return;
+        end(Phase.CANCELLED, why);
+    }
+
+    /** A waiting prompt was removed. The last one removed ends the display. */
+    public synchronized void dropQueued(String why) {
+        if (isFinishedLocked()) return;
+        if (queued > 0) queued--;
+        else end(Phase.CANCELLED, why);
+    }
+
     private boolean touch() {
         if (isFinishedLocked()) return false;
         lastEventAt = clock.getAsLong();

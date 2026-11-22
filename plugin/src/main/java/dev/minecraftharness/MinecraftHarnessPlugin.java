@@ -150,7 +150,18 @@ public final class MinecraftHarnessPlugin extends JavaPlugin implements Listener
         }
 
         String prompt = text.substring(1).trim();
-        Bukkit.getScheduler().runTask(this, () -> dispatchPrompt(player, prompt));
+        boolean urgent = false;
+        if (prompt.equalsIgnoreCase("now") || prompt.toLowerCase(Locale.ROOT).startsWith("now ")) {
+            urgent = true;
+            prompt = prompt.substring(3).trim();
+            if (prompt.isEmpty()) {
+                player.sendMessage(Component.text("使い方: !now <プロンプト>(実行中の依頼を止めて、これを先に実行します)", NamedTextColor.AQUA));
+                return;
+            }
+        }
+        final String p2 = prompt;
+        final boolean u2 = urgent;
+        Bukkit.getScheduler().runTask(this, () -> dispatchPrompt(player, p2, u2));
     }
 
     @EventHandler(priority = EventPriority.HIGHEST, ignoreCancelled = true)
@@ -175,6 +186,10 @@ public final class MinecraftHarnessPlugin extends JavaPlugin implements Listener
     }
 
     private void dispatchPrompt(Player player, String prompt) {
+        dispatchPrompt(player, prompt, false);
+    }
+
+    private void dispatchPrompt(Player player, String prompt, boolean urgent) {
         String convo = agent.handleConversationCommand(player.getName(), prompt);
         if (convo != null) {
             player.sendMessage(Component.text(convo, NamedTextColor.AQUA));
@@ -188,12 +203,26 @@ public final class MinecraftHarnessPlugin extends JavaPlugin implements Listener
         if (!cameraRig.isFilmMode() && progressDisplay.mode() == ProgressMode.OFF) {
             player.sendMessage(Component.text("⚡ 受付: " + model.ref() + " (" + reasoningMode + ")", NamedTextColor.AQUA));
         }
-        dev.minecraftharness.progress.ProgressState ps = agent.host().progress().begin(player.getName());
-        if (ps.queued() > 0) {
-            player.sendMessage(Component.text("⚡ 前の依頼が終わってから実行します(" + (ps.queued() + 1) + " 番目)", NamedTextColor.YELLOW));
+        HarnessAgent.Enqueued r = agent.enqueuePrompt(player.getName(), prompt, cameraRig.isFilmMode(), reasoningMode, anchor, urgent);
+        switch (r.status()) {
+            case DUPLICATE -> player.sendMessage(Component.text("⚡ 同じ依頼がすでに実行中か待ち中です。重複は無視しました。", NamedTextColor.YELLOW));
+            case FULL -> player.sendMessage(Component.text("⚡ 待ちが上限(" + r.limit() + " 件)に達しています。終わるまで待つか、/mh queue clear で待ちを消してください。", NamedTextColor.RED));
+            case STOPPED -> { }
+            case ACCEPTED -> {
+                if (urgent) {
+                    stopBuildSide();
+                    player.sendMessage(Component.text("⚡ 実行中の依頼を止めて、これを先に実行します。", NamedTextColor.YELLOW));
+                } else if (r.position() > 0) {
+                    player.sendMessage(Component.text("⚡ 前の依頼が終わってから実行します(待ち: " + r.position() + " 番目)", NamedTextColor.YELLOW));
+                }
+            }
         }
         progressDisplay.tick(cameraRig.isFilmMode());
-        agent.enqueuePrompt(player.getName(), prompt, cameraRig.isFilmMode(), reasoningMode, anchor);
+    }
+
+    /** Clears the build queue and effects that belong to an interrupted run. */
+    private void stopBuildSide() {
+        buildPacer.stopNow();
     }
 
     /** Older configs used off/minimal; both mean the lowest effort now. */
@@ -635,10 +664,32 @@ public final class MinecraftHarnessPlugin extends JavaPlugin implements Listener
                 sender.sendMessage("§aReset all session builds (§f" + r.get("restoredBlocks").getAsInt() + " blocks restored§a).");
             }
             case "stop" -> {
-                agent.cancelActive();
-                progressDisplay.clearAll();
+                boolean all = args.length >= 2 && "all".equalsIgnoreCase(args[1]);
+                agent.stop(all);
+                if (all || agent.pendingCount() == 0) progressDisplay.clearAll();
                 buildPacer.stopNow();
-                sender.sendMessage("§eStopped active AI run, build queue, and VFX.");
+                sender.sendMessage(all
+                    ? "§e実行中の依頼、待ち、建築キュー、演出をすべて止めました。"
+                    : "§e実行中の依頼、建築キュー、演出を止めました。待ちは残っています(全部消すなら /mh stop all)。");
+            }
+            case "now" -> {
+                if (!(sender instanceof Player p)) {
+                    sender.sendMessage("Players only.");
+                } else if (args.length < 2) {
+                    sender.sendMessage("§b使い方: §f/mh now <プロンプト> §7(実行中の依頼を止めて、これを先に実行)");
+                } else {
+                    dispatchPrompt(p, String.join(" ", java.util.Arrays.copyOfRange(args, 1, args.length)), true);
+                }
+            }
+            case "queue" -> {
+                if (args.length >= 2 && "clear".equalsIgnoreCase(args[1])) {
+                    int n = agent.clearQueue(sender.getName());
+                    sender.sendMessage("§e自分の待ちを " + n + " 件消しました。");
+                } else {
+                    List<String> lines = agent.queueLines();
+                    sender.sendMessage(lines.isEmpty() ? "§7実行中の依頼も待ちもありません。" : "§b依頼の順番:");
+                    for (String l : lines) sender.sendMessage("§7 " + l);
+                }
             }
             case "film" -> {
                 boolean next = args.length >= 2 ? "on".equalsIgnoreCase(args[1]) : !cameraRig.isFilmMode();
@@ -874,6 +925,8 @@ public final class MinecraftHarnessPlugin extends JavaPlugin implements Listener
                 case "film", "fx" -> List.of("on", "off", "sound");
                 case "hud" -> List.of("on", "off", "reasoning");
                 case "progress" -> ProgressMode.ids();
+                case "stop" -> List.of("all");
+                case "queue" -> List.of("clear");
                 case "cam" -> List.of("orbit", "dolly", "off");
                 case "history" -> List.of("reset");
                 case "session" -> List.of("list", "use");

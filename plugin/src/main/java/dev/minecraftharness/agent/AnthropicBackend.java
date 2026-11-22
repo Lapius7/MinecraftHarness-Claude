@@ -152,7 +152,7 @@ public final class AnthropicBackend {
             for (int step = 0; step < cfg.maxSteps(); step++) {
                 if (in.cancelled().getAsBoolean()) {
                     host.notifyChat(player, "ビルドを中断しました。", in.filmMode());
-                    host.progress().cancel(player, "/mh stop で停止");
+                    host.progress().cancelRunning(player, "/mh stop で停止");
                     if (!anyStepDone) history.truncateTo(rollbackTo);
                     return;
                 }
@@ -163,7 +163,7 @@ public final class AnthropicBackend {
                     res = streamOnce(cfg, in, callNo, effort, withThinking);
                     if (res.ok) break;
                     if (in.cancelled().getAsBoolean()) {
-                        host.progress().cancel(player, "/mh stop で停止");
+                        host.progress().cancelRunning(player, "/mh stop で停止");
                         if (!anyStepDone) history.truncateTo(rollbackTo);
                         return;
                     }
@@ -228,7 +228,7 @@ public final class AnthropicBackend {
 
                 if (in.cancelled().getAsBoolean()) {
                     host.notifyChat(player, "ビルドを中断しました。", in.filmMode());
-                    host.progress().cancel(player, "/mh stop で停止");
+                    host.progress().cancelRunning(player, "/mh stop で停止");
                     return;
                 }
                 // Everything worked, nothing needs a look at the result, and the player already got

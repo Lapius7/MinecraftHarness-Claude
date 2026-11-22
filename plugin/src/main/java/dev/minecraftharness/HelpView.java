@@ -41,7 +41,11 @@ public final class HelpView {
         new Entry("建築", "/mh speed", "/mh speed ", "建築の速さ",
             "turbo / fast / cinematic から選びます。", "/mh speed fast", PERM_USE),
         new Entry("建築", "/mh stop", "/mh stop", "実行中の依頼を止める",
-            "応答の生成、建築キュー、演出を止めます。", "/mh stop", PERM_USE),
+            "実行中の応答、建築、演出を止めます。待ちは残ります。all で全消し。", "/mh stop all", PERM_USE),
+        new Entry("建築", "!now", "!now ", "割り込んで先に実行",
+            "実行中の依頼を止めて、この指示を先に実行します。", "!now 屋根を丸くして", PERM_USE),
+        new Entry("建築", "/mh queue", "/mh queue", "依頼の順番を見る",
+            "実行中と待ちの一覧。clear で自分の待ちを消します。", "/mh queue clear", PERM_USE),
 
         new Entry("モデル", "/mh model", "/mh model", "モデルの確認と切替",
             "クリック式の一覧を開きます。切替は admin 権限が必要です。", "/mh model cli/opus", PERM_USE),

@@ -170,7 +170,7 @@ public final class ClaudeCliBackend {
             Outcome o = runOnce(cfg, in, callNo, effort, withEffort, resume);
             if (in.cancelled().getAsBoolean()) {
                 host.notifyChat(player, "ビルドを中断しました。", in.filmMode());
-                host.progress().cancel(player, "/mh stop で停止");
+                host.progress().cancelRunning(player, "/mh stop で停止");
                 return;
             }
             if (o.ok) {

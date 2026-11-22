@@ -34,6 +34,13 @@ progress:
 agent:
   tone: friendly
 
+# Prompts sent while another is running wait their turn, one at a time.
+# maxPerPlayer is how many a player may have running + waiting; more are refused.
+# Same text as the player's latest prompt is ignored. !now <prompt> or /mh now <prompt> stops the
+# player's own running prompt and runs the new one first. /mh stop keeps the waiting ones, /mh stop all clears them.
+queue:
+  maxPerPlayer: 5
+
 # Maximum tool-calling rounds per prompt (API mode)
 maxSteps: 12
 

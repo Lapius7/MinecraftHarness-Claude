@@ -18,8 +18,6 @@ import java.util.Locale;
 import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.BiFunction;
 
@@ -60,9 +58,11 @@ public final class HarnessAgent {
 
     private final Plugin plugin;
     private final ToolHost host;
-    private final ExecutorService executor;
+    private final Thread worker;
+    private final Object queueLock = new Object();
+    private final java.util.LinkedList<Job> pending = new java.util.LinkedList<>();
+    private Job running;
     private final AtomicInteger callCounter = new AtomicInteger();
-    private final AtomicInteger generation = new AtomicInteger();
     private final Map<String, PlayerState> players = new ConcurrentHashMap<>();
     private final AnthropicBackend api;
     private final ClaudeCliBackend cli;
@@ -82,28 +82,24 @@ public final class HarnessAgent {
         byte[] rnd = new byte[16];
         new SecureRandom().nextBytes(rnd);
         this.mcpToken = HexFormat.of().formatHex(rnd);
-        this.executor = Executors.newSingleThreadExecutor(r -> {
-            Thread t = new Thread(r, "MinecraftHarness-Agent");
-            t.setDaemon(true);
-            return t;
-        });
+        this.worker = new Thread(this::workLoop, "MinecraftHarness-Agent");
+        this.worker.setDaemon(true);
+        this.worker.start();
     }
 
     public void shutdown() {
         shutdown = true;
-        generation.incrementAndGet();
         cli.cancel();
-        executor.shutdownNow();
+        worker.interrupt();
         synchronized (this) {
             if (mcp != null) mcp.stop();
             mcp = null;
         }
     }
 
-    /** Stops the running turn and drops queued ones. */
+    /** Stops the running turn and drops every waiting one. */
     public void cancelActive() {
-        generation.incrementAndGet();
-        cli.cancel();
+        stop(true);
     }
 
     // ---- settings -------------------------------------------------------------------------
@@ -234,29 +230,166 @@ public final class HarnessAgent {
 
     // ---- prompts --------------------------------------------------------------------------
 
-    public void enqueuePrompt(String playerName, String prompt, boolean filmMode, String reasoningLevel, BuildAnchor anchor) {
-        if (shutdown) return;
-        int gen = generation.get();
-        executor.submit(() -> {
-            if (gen != generation.get()) {
-                host.progress().cancel(playerName, "/mh stop で停止");
-                return;
-            }
-            try {
-                runPrompt(playerName, prompt, filmMode, reasoningLevel, anchor, gen);
-                host.progress().finish(playerName);
-            } catch (Throwable t) {
-                plugin.getLogger().warning("Prompt failed: " + t);
-                host.notifyChat(playerName, "内部エラー: " + ToolHost.truncate(String.valueOf(t.getMessage()), 200), false);
-                host.progress().fail(playerName, "内部エラー");
-                host.progress().finish(playerName);
-            } finally {
-                currentTurn = null;
-            }
-        });
+    // ---- prompt queue -----------------------------------------------------------------------
+
+    /** One accepted prompt. {@code cancelled} stops it whether it is waiting or running. */
+    private static final class Job {
+        final String player, prompt, level;
+        final boolean film;
+        final BuildAnchor anchor;
+        volatile boolean cancelled;
+
+        Job(String player, String prompt, boolean film, String level, BuildAnchor anchor) {
+            this.player = player;
+            this.prompt = prompt;
+            this.film = film;
+            this.level = level;
+            this.anchor = anchor;
+        }
     }
 
-    private void runPrompt(String playerName, String prompt, boolean filmMode, String level, BuildAnchor anchor, int gen) {
+    public enum EnqueueStatus { ACCEPTED, DUPLICATE, FULL, STOPPED }
+
+    /** {@code position} is 0 when the prompt starts right away, else its place among waiting prompts (1 = next). */
+    public record Enqueued(EnqueueStatus status, int position, int limit) {}
+
+    public static final int DEFAULT_QUEUE_LIMIT = 5;
+
+    private int queueLimit() {
+        return Math.max(1, cfg().getInt("queue.maxPerPlayer", DEFAULT_QUEUE_LIMIT));
+    }
+
+    private static boolean same(String a, String b) {
+        return a != null && b != null && a.equalsIgnoreCase(b);
+    }
+
+    /**
+     * Queues a prompt behind the running one. With {@code urgent} it goes first, and the player's own
+     * running prompt is stopped (someone else's is left alone).
+     */
+    public Enqueued enqueuePrompt(String playerName, String prompt, boolean filmMode, String reasoningLevel,
+                                  BuildAnchor anchor, boolean urgent) {
+        if (shutdown) return new Enqueued(EnqueueStatus.STOPPED, 0, queueLimit());
+        int limit = queueLimit();
+        Job job = new Job(playerName, prompt, filmMode, reasoningLevel, anchor);
+        boolean interrupt = false;
+        int position;
+        synchronized (queueLock) {
+            Job last = null;
+            int mine = 0;
+            for (Job j : pending) {
+                if (same(j.player, playerName)) { last = j; mine++; }
+            }
+            if (last == null && running != null && same(running.player, playerName)) last = running;
+            if (running != null && same(running.player, playerName)) mine++;
+            if (last != null && last.prompt.equals(prompt)) return new Enqueued(EnqueueStatus.DUPLICATE, 0, limit);
+            if (mine >= limit) return new Enqueued(EnqueueStatus.FULL, 0, limit);
+            host.progress().begin(playerName);
+            if (urgent) {
+                pending.addFirst(job);
+                interrupt = running != null && same(running.player, playerName);
+                if (interrupt) running.cancelled = true;
+            } else {
+                pending.addLast(job);
+            }
+            position = pending.indexOf(job) + 1;
+            if (running == null && position == 1) position = 0;
+            queueLock.notifyAll();
+        }
+        if (interrupt) cli.cancel();
+        return new Enqueued(EnqueueStatus.ACCEPTED, position, limit);
+    }
+
+    /** Stops the running prompt; with {@code clearQueue} the waiting ones are dropped too. */
+    public void stop(boolean clearQueue) {
+        java.util.List<Job> dropped = new java.util.ArrayList<>();
+        boolean hadRunning;
+        synchronized (queueLock) {
+            if (clearQueue) {
+                dropped.addAll(pending);
+                pending.clear();
+            }
+            hadRunning = running != null;
+            if (running != null) running.cancelled = true;
+        }
+        for (Job j : dropped) j.cancelled = true;
+        if (clearQueue) {
+            for (Job j : dropped) host.progress().cancel(j.player, "/mh stop all で停止");
+            if (hadRunning) host.progress().cancelAll("/mh stop all で停止");
+        }
+        cli.cancel();
+    }
+
+    public int pendingCount() {
+        synchronized (queueLock) {
+            return pending.size();
+        }
+    }
+
+    /** Removes the player's waiting prompts. @return how many were removed. */
+    public int clearQueue(String playerName) {
+        java.util.List<Job> removed = new java.util.ArrayList<>();
+        synchronized (queueLock) {
+            pending.removeIf(j -> {
+                if (same(j.player, playerName)) { removed.add(j); return true; }
+                return false;
+            });
+        }
+        for (Job j : removed) {
+            j.cancelled = true;
+            host.progress().dropQueued(playerName, "待ちを消しました");
+        }
+        return removed.size();
+    }
+
+    /** Lines for /mh queue: the running prompt first, then waiting ones with their owner. */
+    public java.util.List<String> queueLines() {
+        java.util.List<String> out = new java.util.ArrayList<>();
+        synchronized (queueLock) {
+            if (running != null) out.add("実行中: " + running.player + " - " + ToolHost.truncate(running.prompt, 40));
+            int i = 1;
+            for (Job j : pending) out.add("待ち " + (i++) + ": " + j.player + " - " + ToolHost.truncate(j.prompt, 40));
+        }
+        return out;
+    }
+
+    private void workLoop() {
+        while (!shutdown) {
+            Job job;
+            synchronized (queueLock) {
+                while (pending.isEmpty() && !shutdown) {
+                    try {
+                        queueLock.wait();
+                    } catch (InterruptedException e) {
+                        return;
+                    }
+                }
+                if (shutdown) return;
+                job = pending.removeFirst();
+                running = job;
+            }
+            try {
+                if (job.cancelled) {
+                    host.progress().cancelRunning(job.player, "/mh stop で停止");
+                } else {
+                    runPrompt(job.player, job.prompt, job.film, job.level, job.anchor, job);
+                }
+                host.progress().finish(job.player);
+            } catch (Throwable t) {
+                plugin.getLogger().warning("Prompt failed: " + t);
+                host.notifyChat(job.player, "内部エラー: " + ToolHost.truncate(String.valueOf(t.getMessage()), 200), false);
+                host.progress().fail(job.player, "内部エラー");
+                host.progress().finish(job.player);
+            } finally {
+                currentTurn = null;
+                synchronized (queueLock) {
+                    running = null;
+                }
+            }
+        }
+    }
+
+    private void runPrompt(String playerName, String prompt, boolean filmMode, String level, BuildAnchor anchor, Job job) {
         ModelCatalog.Model model = activeModel();
         FileConfiguration c = cfg();
 
@@ -283,7 +416,7 @@ public final class HarnessAgent {
         ToolHost.Turn turn = new ToolHost.Turn(playerName, filmMode, level);
         currentTurn = turn;
         TurnInput in = new TurnInput(playerName, userMessage, filmMode, level, session, turn,
-            () -> shutdown || gen != generation.get());
+            () -> shutdown || job.cancelled);
 
         int maxSteps = Math.max(1, c.getInt("maxSteps", 12));
         if (model.backend() == ModelCatalog.Backend.API) {

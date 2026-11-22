@@ -105,7 +105,17 @@ public final class ProgressTracker {
         if (s != null) s.cancel(reason);
     }
 
-    /** Marks every running prompt cancelled (used by /mh stop). */
+    public void cancelRunning(String player, String reason) {
+        ProgressState s = get(player);
+        if (s != null) s.cancelRunning(reason);
+    }
+
+    public void dropQueued(String player, String reason) {
+        ProgressState s = get(player);
+        if (s != null) s.dropQueued(reason);
+    }
+
+    /** Marks every running prompt cancelled (used by /mh stop all). */
     public void cancelAll(String reason) {
         for (ProgressState s : states.values()) s.cancel(reason);
     }
