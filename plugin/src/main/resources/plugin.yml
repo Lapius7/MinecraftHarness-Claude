@@ -6,12 +6,12 @@ description: Build in Minecraft by chatting with Claude. Runs on your Claude sub
 commands:
   mh:
     description: Claude-powered builder, model switch, undo/reset, film mode, camera rig
-    usage: /mh <prompt|model|key|undo|reset|shift|film|hud|cam|fx|speed|status|stop|reasoning|claude>
+    usage: /mh [help|<prompt>|model|effort|key|undo|reset|shift|film|hud|cam|fx|speed|status|stop|claude]
     permission: minecraftharness.use
 permissions:
   minecraftharness.use:
     description: Send prompts (/mh <prompt>, !<prompt>) and use undo, shift, film, camera and status
     default: op
   minecraftharness.admin:
-    description: Switch model, set the API key, change reasoning level, reset all builds
+    description: Switch model, set the API key, change effort, reset all builds
     default: op

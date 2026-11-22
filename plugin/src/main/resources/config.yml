@@ -9,8 +9,11 @@
 #   api/claude-opus-5-5  api/claude-sonnet-5-5  api/claude-haiku-5-5  api/claude-fable-5-2
 activeModel: cli/opus
 
-# Thinking effort: low | medium | high | xhigh | max   (/mh reasoning <level>)
-reasoning: low
+# Effort (how hard Claude works and thinks): low | medium | high | xhigh | max
+# Change in game with /mh effort <level> (needs minecraftharness.admin); it is saved here.
+# Passed to `claude --effort` (subscription) and to output_config.effort (API).
+# The old key `reasoning` is still read when `effort` is missing.
+effort: low
 
 # Maximum tool-calling rounds per prompt (API mode)
 maxSteps: 12

@@ -80,13 +80,15 @@ mh model api/claude-opus-5-5
 | `/mh model` | use | クリックで切り替えるモデル一覧。使用中のモデルも分かる |
 | `/mh model <参照>` | admin | モデルを切り替える（例: `cli/sonnet`、`api/claude-opus-5-5`） |
 | `/mh key anthropic <キー>` | admin | API キーを保存する（`clear` で削除） |
-| `/mh reasoning <low\|medium\|high\|xhigh\|max>` | admin | 思考の強さ |
+| `/mh effort` | use | 現在の effort を表示し、クリックで選べる一覧を開く |
+| `/mh effort <low\|medium\|high\|xhigh\|max>` | admin | 推論の強さを直接指定する。`config.yml` に保存され、サブスクと API の両方に効く（旧名 `/mh reasoning` も使える） |
 | `/mh undo` | use | 最後の建築を取り消す |
 | `/mh reset` | admin | このセッションの建築をすべて戻す |
 | `/mh shift <上下>` / `/mh shift <右> <上> <前>` | use | 直近の建築物をずらす |
 | `/mh film on\|off` | use | 録画モード（HUD とコマンド出力を隠す） |
 | `/mh cam orbit\|dolly\|off` | use | カメラワーク |
 | `/mh hud on\|off` / `/mh fx on\|off` / `/mh speed <turbo\|fast\|cinematic>` | use | 表示、演出、設置速度 |
+| `/mh` / `/mh help [ページ\|カテゴリ]` | use | ヘルプ。コマンドの行をクリックすると入力欄に入り、ホバーで使用例と権限が出る。権限のないコマンドは灰色になる |
 | `/mh stop` / `/mh status` | use | 実行中の処理を止める / 状態を見る |
 
 Tab 補完には持っている権限で使えるものだけ出ます。
@@ -99,11 +101,13 @@ Tab 補完には持っている権限で使えるものだけ出ます。
 | `api/claude-opus-5-5`、`api/claude-sonnet-5-5`、`api/claude-haiku-5-5`、`api/claude-fable-5-2` | Messages API（API キー） |
 | `cli/<任意のID>`、`api/<任意のID>` | 上の一覧に無いモデルを直接指定 |
 
+effort の値は、Claude CLI には `--effort`、API には `output_config.effort` として渡します。Anthropic の公式ドキュメントでは、組み込みの 4 つの API モデルが 5 段階すべてに対応しています。組み込み外のモデル ID で `xhigh` か `max` を選ぶと、対応を確認できないため警告が出ます。
+
 ## 設定（`config.yml`）
 
 ```yaml
 activeModel: cli/opus
-reasoning: low          # low | medium | high | xhigh | max
+effort: low             # low | medium | high | xhigh | max（旧キー reasoning も読む）
 maxSteps: 12            # API モードの最大ツール往復数
 anthropic:
   apiKey: ""

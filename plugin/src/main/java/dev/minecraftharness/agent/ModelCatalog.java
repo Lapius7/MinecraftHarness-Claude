@@ -109,4 +109,25 @@ public final class ModelCatalog {
     public static List<String> effortLevels() {
         return List.of("low", "medium", "high", "xhigh", "max");
     }
+
+    /**
+     * Checks an effort level against a model. Returns null when it is supported or unknown-but-fine,
+     * otherwise a short warning. Per the Messages API docs, the built-in API models and the claude CLI
+     * accept all five levels. A custom model id is unknown: xhigh and max are not available on every model.
+     */
+    public static String effortWarning(Model model, String level) {
+        if (level == null || !effortLevels().contains(level)) return "未知の effort です: " + level;
+        if (isBuiltin(model)) return null;
+        if (level.equals("xhigh") || level.equals("max")) {
+            return model.ref() + " は組み込み外のモデルです。" + level + " に対応しているか確認できないため、API に断られることがあります。";
+        }
+        return null;
+    }
+
+    private static boolean isBuiltin(Model model) {
+        for (Model m : BUILTIN) {
+            if (m.ref().equals(model.ref())) return true;
+        }
+        return false;
+    }
 }

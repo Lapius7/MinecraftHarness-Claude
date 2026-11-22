@@ -76,7 +76,7 @@ public final class MinecraftHarnessPlugin extends JavaPlugin implements Listener
     @Override
     public void onEnable() {
         saveDefaultConfig();
-        reasoningMode = normalizeReasoning(getConfig().getString("reasoning", "low"));
+        reasoningMode = normalizeReasoning(getConfig().getString("effort", getConfig().getString("reasoning", "low")));
         this.contextProvider = new SpatialContextProvider();
         this.snapshotManager = new TerrainSnapshotManager();
         this.expander = new PrimitiveExpander(contextProvider);
@@ -189,7 +189,7 @@ public final class MinecraftHarnessPlugin extends JavaPlugin implements Listener
     private void setReasoningMode(String level) {
         String l = level == null ? "" : level.toLowerCase(Locale.ROOT).trim();
         if (!ModelCatalog.effortLevels().contains(l)) throw new IllegalArgumentException("Unknown effort level");
-        getConfig().set("reasoning", l);
+        getConfig().set("effort", l);
         saveConfig();
         reasoningMode = l;
     }
@@ -594,12 +594,20 @@ public final class MinecraftHarnessPlugin extends JavaPlugin implements Listener
     @Override
     public boolean onCommand(CommandSender sender, Command command, String label, String[] args) {
         if (args.length == 0) {
-            sender.sendMessage("§bMinecraftHarness §7| §f!<プロンプト>§7 または §f/mh <プロンプト|model|key|undo|reset|shift|film|cam|fx|reasoning|claude|stop|status>");
+            showHelp(sender, 1);
             return true;
         }
 
         String sub = args[0].toLowerCase(Locale.ROOT);
         switch (sub) {
+            case "help", "?" -> {
+                int page = HelpView.resolvePage(args.length >= 2 ? args[1] : null);
+                if (page == 0) {
+                    sender.sendMessage(Component.text("ページは 1〜" + HelpView.pageCount() + " か、建築・モデル・セッション・演出・管理 で指定します。", NamedTextColor.RED));
+                } else {
+                    showHelp(sender, page);
+                }
+            }
             case "undo" -> {
                 JsonObject r = performUndo();
                 sender.sendMessage("§aUndid last build (§f" + r.get("restoredBlocks").getAsInt() + " blocks restored§a).");
@@ -667,7 +675,7 @@ public final class MinecraftHarnessPlugin extends JavaPlugin implements Listener
             }
             case "reasoning", "effort" -> {
                 if (args.length < 2) {
-                    sender.sendMessage("§b現在の思考レベル: §f" + reasoningMode + " §7(" + String.join(" | ", ModelCatalog.effortLevels()) + ")");
+                    showEffortMenu(sender);
                     return true;
                 }
                 if (!requireAdmin(sender)) return true;
@@ -677,7 +685,9 @@ public final class MinecraftHarnessPlugin extends JavaPlugin implements Listener
                     return true;
                 }
                 setReasoningMode(lvl);
-                sender.sendMessage("§b思考レベルを §f" + lvl + "§b にしました。");
+                sender.sendMessage("§beffort を §f" + lvl + "§b にしました。config.yml に保存済みで、次の依頼から効きます。");
+                String warn = ModelCatalog.effortWarning(agent.activeModel(), lvl);
+                if (warn != null) sender.sendMessage("§e" + warn);
             }
             case "key" -> {
                 if (!requireAdmin(sender)) return true;
@@ -728,6 +738,8 @@ public final class MinecraftHarnessPlugin extends JavaPlugin implements Listener
                 }
                 ModelCatalog.Model m = chosen.get();
                 sender.sendMessage("§aモデルを §f" + m.ref() + " (" + m.label() + ")§a に切り替えました。");
+                String effortWarn = ModelCatalog.effortWarning(m, reasoningMode);
+                if (effortWarn != null) sender.sendMessage("§e" + effortWarn);
                 if (m.backend() == ModelCatalog.Backend.API && !agent.hasApiKey()) {
                     sender.sendMessage("§eAPIキーが未設定です。コンソールで §fmh key anthropic <キー>§e を実行してください。");
                 }
@@ -815,9 +827,9 @@ public final class MinecraftHarnessPlugin extends JavaPlugin implements Listener
     public List<String> onTabComplete(CommandSender sender, Command command, String alias, String[] args) {
         boolean admin = sender.hasPermission(PERM_ADMIN);
         if (args.length == 1) {
-            List<String> subs = new ArrayList<>(List.of("model", "undo", "shift", "film", "hud", "cam", "fx", "speed",
+            List<String> subs = new ArrayList<>(List.of("help", "effort", "model", "undo", "shift", "film", "hud", "cam", "fx", "speed",
                 "session", "history", "new", "claude", "stop", "status"));
-            if (admin) subs.addAll(List.of("key", "reset", "reasoning"));
+            if (admin) subs.addAll(List.of("key", "reset"));
             return filterPrefix(subs, args[0]);
         }
         if (args.length == 2) {
@@ -832,6 +844,7 @@ public final class MinecraftHarnessPlugin extends JavaPlugin implements Listener
                 case "session" -> List.of("list", "use");
                 case "speed" -> List.of("turbo", "fast", "cinematic");
                 case "reasoning", "effort" -> admin ? ModelCatalog.effortLevels() : List.<String>of();
+                case "help" -> HelpView.pageCompletions();
                 default -> List.<String>of();
             }, args[1]);
         }
@@ -850,6 +863,51 @@ public final class MinecraftHarnessPlugin extends JavaPlugin implements Listener
         if (sender.hasPermission(PERM_ADMIN)) return true;
         sender.sendMessage("§cこの操作には " + PERM_ADMIN + " 権限が必要です。");
         return false;
+    }
+
+    private void showHelp(CommandSender sender, int page) {
+        ModelCatalog.Model m = agent.activeModel();
+        String auth = m.backend() == ModelCatalog.Backend.API
+            ? "Anthropic API（キー " + (agent.hasApiKey() ? "設定済み" : "未設定") + "）"
+            : "claude CLI（サブスクリプション）";
+        String session = sender instanceof Player p ? agent.sessionSummary(p.getName()) : "-";
+        HelpView.Status status = new HelpView.Status(auth, m.ref(), reasoningMode, session);
+        String version = getDescription().getVersion();
+        for (Component line : HelpView.render(version, status, page, sender::hasPermission)) {
+            sender.sendMessage(line);
+        }
+    }
+
+    private void showEffortMenu(CommandSender sender) {
+        boolean admin = sender.hasPermission(PERM_ADMIN);
+        ModelCatalog.Model m = agent.activeModel();
+        sender.sendMessage(Component.text("=== effort" + (admin ? " (クリックで切替)" : "") + " ===", NamedTextColor.AQUA));
+        sender.sendMessage(Component.text("使用中: ", NamedTextColor.GRAY)
+            .append(Component.text(reasoningMode, NamedTextColor.GREEN, TextDecoration.BOLD))
+            .append(Component.text("  モデル: " + m.ref(), NamedTextColor.GRAY)));
+        for (String lvl : ModelCatalog.effortLevels()) {
+            boolean isActive = lvl.equals(reasoningMode);
+            Component btn = Component.text(isActive ? " [●使用中] " : " [切替] ", isActive ? NamedTextColor.GREEN : NamedTextColor.GOLD);
+            if (admin && !isActive) {
+                btn = btn.clickEvent(ClickEvent.runCommand("/mh effort " + lvl))
+                    .hoverEvent(HoverEvent.showText(Component.text("クリックで " + lvl + " に切替", NamedTextColor.AQUA)));
+            }
+            Component line = btn.append(Component.text(lvl, isActive ? NamedTextColor.WHITE : NamedTextColor.AQUA))
+                .append(Component.text(" — " + effortNote(lvl), NamedTextColor.GRAY));
+            if (ModelCatalog.effortWarning(m, lvl) != null) line = line.append(Component.text(" [要確認]", NamedTextColor.YELLOW));
+            sender.sendMessage(line);
+        }
+        sender.sendMessage(Component.text("claude CLI は --effort、API は output_config.effort に渡します。", NamedTextColor.DARK_GRAY));
+    }
+
+    private static String effortNote(String lvl) {
+        return switch (lvl) {
+            case "low" -> "速く安く";
+            case "medium" -> "ほどほど";
+            case "high" -> "しっかり考える";
+            case "xhigh" -> "長い作業向け";
+            default -> "最大。遅く高い";
+        };
     }
 
     private void showModelMenu(CommandSender sender) {
