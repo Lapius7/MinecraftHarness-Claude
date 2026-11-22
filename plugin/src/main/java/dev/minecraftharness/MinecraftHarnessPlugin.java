@@ -14,6 +14,7 @@ import dev.minecraftharness.context.SpatialContextProvider;
 import dev.minecraftharness.context.SpatialContextProvider.BuildAnchor;
 import dev.minecraftharness.context.SpatialContextProvider.StructureRecord;
 import dev.minecraftharness.fx.CameraRig;
+import dev.minecraftharness.fx.MarkdownChatRenderer;
 import dev.minecraftharness.fx.TelemetryHud;
 import dev.minecraftharness.fx.VfxEngine;
 import dev.minecraftharness.ws.HarnessWebSocketServer;
@@ -317,13 +318,14 @@ public final class MinecraftHarnessPlugin extends JavaPlugin implements Listener
             case "notify_status" -> {
                 String msg = params.has("message") ? params.get("message").getAsString() : "";
                 if (!cameraRig.isFilmMode() && !msg.isBlank()) {
-                    String tag = "[" + activeRuntimeLabel() + "] ";
+                    Component rendered = MarkdownChatRenderer.render("[" + activeRuntimeLabel() + "] ", msg);
                     Player recipient = (playerName != null && !playerName.isBlank()) ? Bukkit.getPlayerExact(playerName) : null;
                     if (recipient != null) {
-                        recipient.sendMessage(Component.text(tag, NamedTextColor.GRAY)
-                            .append(Component.text(msg, NamedTextColor.WHITE)));
+                        recipient.sendMessage(rendered);
                     } else {
-                        broadcastStatus("§7" + tag + "§f" + msg);
+                        for (Player pl : Bukkit.getOnlinePlayers()) {
+                            pl.sendMessage(rendered);
+                        }
                     }
                 }
                 JsonObject r = new JsonObject();
