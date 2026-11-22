@@ -21,6 +21,8 @@ import java.util.function.Supplier;
  */
 public final class McpServer {
 
+    private static final boolean DEBUG = Boolean.getBoolean("mh.mcp.debug");
+
     private final McpProtocol protocol;
     private final String token;
     private HttpServer server;
@@ -66,7 +68,9 @@ public final class McpServer {
                 return;
             }
             String body = new String(ex.getRequestBody().readAllBytes(), StandardCharsets.UTF_8);
+            if (DEBUG) System.err.println("[mcp] <- " + body);
             McpProtocol.Reply reply = protocol.handle(body);
+            if (DEBUG) System.err.println("[mcp] -> " + reply.status() + " " + (reply.body() == null ? "" : ToolHost.truncate(reply.body(), 300)));
             if (reply.body() == null) {
                 ex.sendResponseHeaders(reply.status(), -1);
                 return;

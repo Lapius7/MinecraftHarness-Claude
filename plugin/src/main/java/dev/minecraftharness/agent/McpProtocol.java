@@ -19,13 +19,27 @@ public final class McpProtocol {
     private final String serverName;
     private final String serverVersion;
     private final JsonArray tools;
+
+    /** Anthropic tool definitions use input_schema; MCP wants inputSchema. */
+    static JsonArray toMcpTools(JsonArray src) {
+        JsonArray out = new JsonArray();
+        for (JsonElement el : src) {
+            JsonObject t = el.getAsJsonObject().deepCopy();
+            if (t.has("input_schema") && !t.has("inputSchema")) {
+                t.add("inputSchema", t.remove("input_schema"));
+            }
+            t.remove("eager_input_streaming");
+            out.add(t);
+        }
+        return out;
+    }
     private final BiFunction<String, JsonObject, JsonObject> toolCaller;
 
     public McpProtocol(String serverName, String serverVersion, JsonArray tools,
                        BiFunction<String, JsonObject, JsonObject> toolCaller) {
         this.serverName = serverName;
         this.serverVersion = serverVersion;
-        this.tools = tools;
+        this.tools = toMcpTools(tools);
         this.toolCaller = toolCaller;
     }
 
