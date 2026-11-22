@@ -38,10 +38,12 @@ Type one line in chat (`!<prompt>`) and watch AI design original builds, interio
 ## Quick Start (Windows — 3 Steps)
 
 ### Prerequisites
-- **Java 21+** (for PaperMC 1.21.4 & Gradle build)
+- **Java 21+** (for PaperMC 1.21.x & Gradle build)
 - **Node.js 20+** (for the Bridge)
-- **Minecraft Java Edition 1.21.4** (vanilla or Fabric + Iris Shaders)
+- **Minecraft Java Edition 1.21.x** (tested on PaperMC 1.21.4; compatible with Paper/Purpur 1.21.0–1.21.x, vanilla client or Fabric + Iris Shaders)
 - An API key for Cerebras or any OpenAI Chat Completions-compatible model with tool calling
+
+> **Pre-built Plugin JAR**: You can also download `MinecraftHarness-0.1.0.jar` directly from [GitHub Releases](https://github.com/ykundesu/MinecraftHarness/releases) and drop it into your PaperMC `plugins/` folder (then run the `bridge/` server locally).
 
 ### 1. Configure your API key
 Copy `.env.example` to `.env` in the project root and set your key:
@@ -93,8 +95,11 @@ Use `set-provider.ps1` (or `node bridge/provider-config.mjs`)—Direct Mode read
 ```powershell
 .\set-provider.ps1 -List
 .\set-provider.ps1 cerebras
+.\set-provider.ps1 opendesign      # DeepSeek V4.1 Flash (OpenDesign Go, OPENDESIGN_API_KEY)
 .\set-provider.ps1 commandcode
 ```
+
+You can also switch models directly **in-game** with `/mh model` (clickable chat menu + Tab completion) or from the live Telemetry Dashboard (`http://127.0.0.1:25581/`).
 
 To register any HTTPS OpenAI Chat Completions-compatible provider (OpenAI, OpenRouter, Groq, DeepSeek, etc.):
 ```powershell
@@ -106,6 +111,7 @@ Put `MY_PROVIDER_API_KEY=...` in `.env` and select it with `.\set-provider.ps1 m
 
 ## In-Game Commands
 - `!<prompt>` or `/mh <prompt>` — Build, edit, or create minigames at your gaze target
+- `/mh model [name]` — Show clickable model selector in chat or switch active provider/model live (e.g. `/mh model cerebras`, `/mh model opendesign`, `/mh model opendesign/deepseek-v4.1-flash`)
 - `!new` — Reset conversation history for your player
 - `/mh undo` / `/mh reset` — Restore terrain & remove spawned entities cleanly
 - `/mh shift <du>` / `/mh shift <dr> <du> <df>` — Shift the most recent structure by an offset (e.g. `/mh shift -3` lowers it by 3 blocks)

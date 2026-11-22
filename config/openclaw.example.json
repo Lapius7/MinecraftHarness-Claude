@@ -83,6 +83,38 @@
             }
           }
         ]
+      },
+      "opendesign": {
+        "baseUrl": "http://127.0.0.1:25582/opendesign/v1",
+        "apiKey": "${OPENDESIGN_API_KEY}",
+        "api": "openai-completions",
+        "timeoutSeconds": 300,
+        "models": [
+          {
+            "id": "deepseek-v4.1-flash",
+            "name": "DeepSeek V4.1 Flash (OpenDesign Go)",
+            "api": "openai-completions",
+            "reasoning": true,
+            "input": [
+              "text",
+              "image"
+            ],
+            "contextWindow": 131072,
+            "maxTokens": 16384,
+            "compat": {
+              "supportsReasoningEffort": true,
+              "supportedReasoningEfforts": [
+                "low",
+                "medium",
+                "high"
+              ],
+              "supportsDeveloperRole": false,
+              "supportsStrictMode": false,
+              "supportsTools": true,
+              "maxTokensField": "max_completion_tokens"
+            }
+          }
+        ]
       }
     }
   },

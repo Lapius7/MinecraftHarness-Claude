@@ -731,6 +731,16 @@ export class TelemetryHub {
 }
 
 const keepAliveAgent = new https.Agent({ keepAlive: true, maxSockets: 16 });
+const httpKeepAliveAgent = new http.Agent({ keepAlive: true, maxSockets: 16 });
+
+function resolveOpenDesignBase(stateDir?: string): URL {
+  const raw = loadEnvValue("OPENDESIGN_BASE_URL", stateDir) || "https://amr-link.open-design.ai/v1";
+  try {
+    return new URL(raw);
+  } catch {
+    return new URL("https://amr-link.open-design.ai/v1");
+  }
+}
 
 export interface StreamedBuildOpEvent extends StreamedOpEvent {
   callIndex: number;
@@ -750,14 +760,19 @@ export interface TelemetryProxyOptions {
 function loadEnvValue(varName: string, stateDir?: string): string | undefined {
   if (process.env[varName]) return process.env[varName];
   if (!stateDir) return undefined;
-  const envFile = path.join(stateDir, ".env");
-  if (!existsSync(envFile)) return undefined;
-  for (const line of readFileSync(envFile, "utf8").split(/\r?\n/)) {
-    const trimmed = line.trim();
-    if (!trimmed || trimmed.startsWith("#")) continue;
-    const eq = trimmed.indexOf("=");
-    if (eq > 0 && trimmed.slice(0, eq).trim() === varName) {
-      return trimmed.slice(eq + 1).trim();
+  const candidates = [
+    path.join(stateDir, ".env"),
+    path.resolve(stateDir, "..", "..", ".env"),
+  ];
+  for (const envFile of candidates) {
+    if (!existsSync(envFile)) continue;
+    for (const line of readFileSync(envFile, "utf8").split(/\r?\n/)) {
+      const trimmed = line.trim();
+      if (!trimmed || trimmed.startsWith("#")) continue;
+      const eq = trimmed.indexOf("=");
+      if (eq > 0 && trimmed.slice(0, eq).trim() === varName) {
+        return trimmed.slice(eq + 1).trim();
+      }
     }
   }
   return undefined;
@@ -793,6 +808,15 @@ function resolveFallbackTarget(
       return {
         upstreamUrl: new URL("https://api.cerebras.ai"),
         targetPath: "/v1/chat/completions",
+        apiKey,
+        modelId,
+      };
+    }
+    if (fallbackProviderId === "opendesign") {
+      const od = resolveOpenDesignBase(stateDir);
+      return {
+        upstreamUrl: od,
+        targetPath: od.pathname.replace(/\/+$/, "") + "/chat/completions",
         apiKey,
         modelId,
       };
@@ -837,9 +861,17 @@ export function startCerebrasTelemetryProxy(
       const rawBody = Buffer.concat(chunks);
       const reqPath = clientReq.url ?? "/";
       const commandCode = reqPath.startsWith("/commandcode/v1/");
-      let upstreamUrl = commandCode ? new URL("https://api.commandcode.ai") : cerebrasUrl;
-      let targetPath = commandCode ? "/provider" + reqPath.slice("/commandcode".length)
-        : reqPath.startsWith("/v1") ? reqPath : `/v1${reqPath.startsWith("/") ? "" : "/"}${reqPath}`;
+      const openDesign = reqPath.startsWith("/opendesign/v1/");
+      let upstreamUrl = cerebrasUrl;
+      let targetPath = reqPath.startsWith("/v1") ? reqPath : `/v1${reqPath.startsWith("/") ? "" : "/"}${reqPath}`;
+      if (commandCode) {
+        upstreamUrl = new URL("https://api.commandcode.ai");
+        targetPath = "/provider" + reqPath.slice("/commandcode".length);
+      } else if (openDesign) {
+        upstreamUrl = resolveOpenDesignBase(opts.openclawStateDir);
+        const suffix = reqPath.slice("/opendesign/v1".length);
+        targetPath = upstreamUrl.pathname.replace(/\/+$/, "") + suffix;
+      }
       if (reqPath.startsWith("/providers/")) {
         const route = /^\/providers\/([a-f0-9]{24})\/v1(\/[^?#]*)(\?[^#]*)?$/.exec(reqPath);
         try {
@@ -963,6 +995,7 @@ export function startCerebrasTelemetryProxy(
       const RETRY_DELAYS_MS = [400, 900, 1800];
       const fallbackProviderId = (process.env.MH_FALLBACK_PROVIDER ?? "").trim().toLowerCase();
       let usedFallback = false;
+      let retriedWithoutEffort = false;
       let clientClosed = false;
       let activeUpstreamReq: http.ClientRequest | null = null;
       clientRes.on("close", () => {
@@ -986,19 +1019,50 @@ export function startCerebrasTelemetryProxy(
           return;
         }
         if (trace) hub.markAttemptStart(trace);
-        const upstreamReq = https.request(
+        const isPlainHttp = reqUrl.protocol === "http:";
+        const requestFn = isPlainHttp ? http.request : https.request;
+        const upstreamReq = requestFn(
           {
             protocol: reqUrl.protocol,
             hostname: reqUrl.hostname,
-            port: reqUrl.port || 443,
+            port: reqUrl.port || (isPlainHttp ? 80 : 443),
             path: reqTargetPath,
             method: clientReq.method,
             headers: { ...reqHeaders },
-            agent: keepAliveAgent,
+            agent: isPlainHttp ? httpKeepAliveAgent : keepAliveAgent,
             timeout: 300000,
           },
           (upstreamRes) => {
             const status = upstreamRes.statusCode ?? 500;
+
+            if (trace && status === 400 && !retriedWithoutEffort) {
+              const parsedBody = (clientReq as unknown as { __mhParsedBody?: Record<string, unknown> | null }).__mhParsedBody;
+              if (parsedBody && "reasoning_effort" in parsedBody) {
+                const errChunks: Buffer[] = [];
+                upstreamRes.on("data", (c: Buffer) => errChunks.push(c));
+                upstreamRes.on("end", () => {
+                  const body400 = Buffer.concat(errChunks).toString("utf8");
+                  if (/reasoning_effort/i.test(body400) && /unsupported|invalid|unknown|not supported|unrecognized|extra/i.test(body400)) {
+                    retriedWithoutEffort = true;
+                    const stripped = { ...parsedBody };
+                    delete stripped.reasoning_effort;
+                    const newBody = Buffer.from(JSON.stringify(stripped), "utf8");
+                    const newHeaders = { ...reqHeaders, "content-length": String(newBody.length) };
+                    trace!.reasoningEffort = "default";
+                    console.log(`[Telemetry] #${trace!.callNumber} upstream rejected reasoning_effort — retrying without it`);
+                    sendAttempt(attempt, reqUrl, reqTargetPath, newHeaders, newBody);
+                    return;
+                  }
+                  hub.markHeaders(trace!, status);
+                  const outHeaders: Record<string, string | string[] | undefined> = { ...upstreamRes.headers };
+                  delete outHeaders["transfer-encoding"];
+                  clientRes.writeHead(status, outHeaders);
+                  clientRes.end(body400);
+                  hub.finishInference(trace!, body400.slice(0, 300));
+                });
+                return;
+              }
+            }
 
             if (trace && status === 429 && (attempt < RETRY_DELAYS_MS.length || (!usedFallback && fallbackProviderId))) {
               const errChunks: Buffer[] = [];
@@ -1223,7 +1287,7 @@ export function startCerebrasTelemetryProxy(
   });
 
   proxy.listen(port, host, () => {
-    console.log(`[Telemetry] Inference telemetry listening on http://${host}:${port} (Cerebras and Command Code)`);
+    console.log(`[Telemetry] Inference telemetry listening on http://${host}:${port} (Cerebras, Command Code, OpenDesign)`);
   });
 
   return proxy;

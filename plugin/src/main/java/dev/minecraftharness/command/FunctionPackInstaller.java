@@ -64,10 +64,27 @@ public final class FunctionPackInstaller {
         return result;
     }
 
+    private static int detectPackFormat() {
+        String ver = Bukkit.getMinecraftVersion();
+        if (ver.startsWith("1.21.11") || ver.startsWith("1.21.10")) return 88;
+        if (ver.startsWith("1.21.9")) return 88;
+        if (ver.startsWith("1.21.8") || ver.startsWith("1.21.7")) return 81;
+        if (ver.startsWith("1.21.6")) return 80;
+        if (ver.startsWith("1.21.5")) return 71;
+        if (ver.startsWith("1.21.4")) return 61;
+        if (ver.startsWith("1.21.3") || ver.startsWith("1.21.2")) return 57;
+        return 48; // 1.21.0 / 1.21.1 baseline
+    }
+
     private static void writePack(Path file, String namespace, JsonObject functions, BuildAnchor anchor,
                                   CommandWirer commands) throws IOException {
         if (functions == null || functions.isEmpty()) throw new IllegalArgumentException("Supply at least one function");
-        entry(file, "pack.mcmeta", "{\"pack\":{\"pack_format\":61,\"description\":\"MinecraftHarness: " + namespace + "\"}}");
+        int pf = detectPackFormat();
+        String mcmeta = "{\"pack\":{\"pack_format\":" + pf
+            + ",\"supported_formats\":{\"min_inclusive\":48,\"max_inclusive\":99}"
+            + ",\"min_format\":48,\"max_format\":99"
+            + ",\"description\":\"MinecraftHarness: " + namespace + "\"}}";
+        entry(file, "pack.mcmeta", mcmeta);
         String base = "data/" + namespace + "/function/";
         for (var function : functions.entrySet()) {
             String name = function.getKey();

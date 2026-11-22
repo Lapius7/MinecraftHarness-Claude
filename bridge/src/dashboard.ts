@@ -179,6 +179,9 @@ export function renderDashboardHtml(): string {
     </div>
     <div class="controls">
       <span id="sessionSummary" style="font-size:12px;color:var(--muted);">Calls: 0 | Tokens: 0</span>
+      <label style="font-size:12px;color:var(--muted);">Model:
+        <select id="modelSel" style="max-width:260px;"><option value="">loading...</option></select>
+      </label>
       <label style="font-size:12px;color:var(--muted);">Thinking:
         <select id="thinkingSel">
           <option value="off">off</option>
@@ -463,6 +466,42 @@ export function renderDashboardHtml(): string {
       });
     }
 
+    async function loadModels() {
+      const sel = document.getElementById("modelSel");
+      try {
+        const res = await fetch("/models");
+        const data = await res.json();
+        if (!data.ok || !Array.isArray(data.models)) return;
+        sel.innerHTML = "";
+        for (const m of data.models) {
+          const opt = document.createElement("option");
+          opt.value = m.ref;
+          opt.textContent = (m.name || m.ref) + (m.hasApiKey ? "" : " [no key]");
+          if (m.active) opt.selected = true;
+          sel.appendChild(opt);
+        }
+      } catch {}
+    }
+
+    document.getElementById("modelSel").onchange = async (e) => {
+      const sel = e.target;
+      sel.disabled = true;
+      try {
+        const response = await fetch("/model", {
+          method: "POST", headers: { "content-type": "application/json" },
+          body: JSON.stringify({ target: sel.value }),
+        });
+        const data = await response.json();
+        if (!response.ok || !data.ok) throw new Error(data.error || "モデルを切り替えできませんでした");
+        if (data.warning) alert(data.warning);
+      } catch (err) {
+        alert(err.message);
+        await loadModels();
+      } finally {
+        sel.disabled = false;
+      }
+    };
+
     document.getElementById("clearBtn").onclick = () => fetch("/telemetry/clear", { method: "POST" });
     document.getElementById("thinkingSel").onchange = async (e) => {
       const select = e.target;
@@ -494,6 +533,7 @@ export function renderDashboardHtml(): string {
       });
     };
 
+    loadModels();
     connectSse();
   </script>
 </body>

@@ -183,10 +183,134 @@ async function warmUpGatewayOnce(): Promise<void> {
   return gatewayWarmupPromise;
 }
 
+interface ConfiguredModelInfo {
+  ref: string;
+  provider: string;
+  modelId: string;
+  name: string;
+  apiKeyEnv: string;
+  hasApiKey: boolean;
+  active: boolean;
+}
+
+function readOpenClawConfigObject(): Record<string, unknown> {
+  let targetPath = OPENCLAW_CONFIG_PATH;
+  if (!fs.existsSync(targetPath)) {
+    const examplePath = path.join(PROJECT_ROOT, "config", "openclaw.example.json");
+    if (fs.existsSync(examplePath)) {
+      fs.mkdirSync(path.dirname(targetPath), { recursive: true });
+      const ws = path.join(PROJECT_ROOT, "bridge", "openclaw-workspace").replace(/\\/g, "\\\\");
+      const raw = fs.readFileSync(examplePath, "utf8").replace("__WORKSPACE_DIR__", ws);
+      fs.writeFileSync(targetPath, raw, "utf8");
+    }
+  }
+  return JSON.parse(fs.readFileSync(targetPath, "utf8").replace(/^\uFEFF/, "")) as Record<string, unknown>;
+}
+
+function saveOpenClawConfigObject(config: Record<string, unknown>): void {
+  const tmp = `${OPENCLAW_CONFIG_PATH}.${Date.now()}.${Math.random().toString(36).slice(2, 8)}.tmp`;
+  try {
+    fs.writeFileSync(tmp, JSON.stringify(config, null, 2) + "\n", { flag: "wx", mode: 0o600 });
+    fs.renameSync(tmp, OPENCLAW_CONFIG_PATH);
+  } finally {
+    fs.rmSync(tmp, { force: true });
+  }
+}
+
+function listConfiguredModels(): { active: string; models: ConfiguredModelInfo[] } {
+  const envMap: NodeJS.ProcessEnv = { ...process.env };
+  loadDotEnvInto(envMap);
+  const config = readOpenClawConfigObject();
+  const modelField = (config.agents as Record<string, unknown> | undefined)?.defaults as Record<string, unknown> | undefined;
+  const rawModel = modelField?.model;
+  const active =
+    typeof rawModel === "string"
+      ? rawModel
+      : typeof (rawModel as Record<string, unknown> | undefined)?.primary === "string"
+        ? String((rawModel as Record<string, unknown>).primary)
+        : "";
+  const providers = ((config.models as Record<string, unknown> | undefined)?.providers ?? {}) as Record<
+    string,
+    Record<string, unknown>
+  >;
+  const models: ConfiguredModelInfo[] = [];
+  for (const [providerId, provider] of Object.entries(providers)) {
+    const rawKey = typeof provider.apiKey === "string" ? provider.apiKey : "";
+    const envMatch = /^\$\{([A-Z0-9_]+)\}$/.exec(rawKey.trim());
+    const apiKeyEnv = envMatch ? envMatch[1] : "";
+    const resolvedKey = rawKey.replace(/\$\{([A-Z0-9_]+)\}/g, (_m, k: string) => envMap[k] ?? "");
+    const hasApiKey = resolvedKey.trim().length > 0;
+    const list = Array.isArray(provider.models) ? (provider.models as Array<Record<string, unknown>>) : [];
+    for (const entry of list) {
+      const id = typeof entry.id === "string" ? entry.id : "";
+      if (!id) continue;
+      const ref = `${providerId}/${id}`;
+      const name = typeof entry.name === "string" && entry.name ? entry.name : ref;
+      models.push({
+        ref,
+        provider: providerId,
+        modelId: id,
+        name,
+        apiKeyEnv,
+        hasApiKey,
+        active: ref === active,
+      });
+    }
+  }
+  return { active, models };
+}
+
+function selectConfiguredModel(targetRaw: string): {
+  ok: boolean;
+  active?: string;
+  selected?: ConfiguredModelInfo;
+  warning?: string;
+  error?: string;
+} {
+  const query = targetRaw.trim().toLowerCase();
+  if (!query) {
+    return { ok: false, error: "Model target is empty" };
+  }
+  const { models } = listConfiguredModels();
+  const match =
+    models.find((m) => m.ref.toLowerCase() === query) ??
+    models.find((m) => m.provider.toLowerCase() === query) ??
+    models.find((m) => m.modelId.toLowerCase() === query) ??
+    models.find((m) => m.ref.toLowerCase().includes(query) || m.name.toLowerCase().includes(query));
+
+  if (!match) {
+    const valid = models.map((m) => m.provider + " (" + m.ref + ")").join(", ");
+    return { ok: false, error: `Unknown model '${targetRaw}'. Available: ${valid}` };
+  }
+
+  const config = readOpenClawConfigObject();
+  const agents = (config.agents ?? {}) as Record<string, unknown>;
+  const defaults = (agents.defaults ?? {}) as Record<string, unknown>;
+  const modelObj = typeof defaults.model === "object" && defaults.model !== null
+    ? (defaults.model as Record<string, unknown>)
+    : {};
+  modelObj.primary = match.ref;
+  defaults.model = modelObj;
+  agents.defaults = defaults;
+  config.agents = agents;
+  saveOpenClawConfigObject(config);
+
+  const warning = !match.hasApiKey && match.apiKeyEnv
+    ? `${match.apiKeyEnv} が未設定です。.env に ${match.apiKeyEnv}=<キー> を設定してください（Gatewayモード時は再起動が必要です）。`
+    : undefined;
+  return {
+    ok: true,
+    active: match.ref,
+    selected: { ...match, active: true },
+    warning,
+  };
+}
+
 async function configuredModelHeaders(): Promise<Record<string, string>> {
-  const config = JSON.parse(await fs.promises.readFile(OPENCLAW_CONFIG_PATH, "utf8").then(text => text.replace(/^\uFEFF/, "")));
-  const model = config.agents?.defaults?.model;
-  const primary = typeof model === "string" ? model : model?.primary;
+  const config = readOpenClawConfigObject();
+  const model = (config.agents as Record<string, unknown> | undefined)?.defaults as Record<string, unknown> | undefined;
+  const m = model?.model;
+  const primary = typeof m === "string" ? m : (m as Record<string, unknown> | undefined)?.primary;
   return typeof primary === "string" && primary ? { "x-openclaw-model": primary } : {};
 }
 
@@ -578,6 +702,14 @@ async function main() {
     return result;
   }
 
+  function syncModelsToPlugin(): void {
+    if (!mcClient.isConnected()) return;
+    try {
+      const payload = listConfiguredModels();
+      void mcClient.request("sync_models", payload as unknown as Record<string, unknown>, 5000).catch(() => {});
+    } catch {}
+  }
+
   mcClient.onEvent((event, data) => {
     if (event === "bridge_hello") {
       void mcClient.request("get_reasoning", {}).then(result => {
@@ -586,12 +718,31 @@ async function main() {
           telemetry.setConfiguredThinking(currentThinking);
         }
       }).catch(() => {});
+      syncModelsToPlugin();
     }
     if (event === "player_command") {
       if (data.command === "reasoning" && typeof data.value === "string") {
         currentThinking = data.value;
         telemetry.setConfiguredThinking(currentThinking);
         console.log(`[Bridge] Updated thinking level to: ${currentThinking}`);
+      } else if (data.command === "model") {
+        const playerName = typeof data.playerName === "string" ? data.playerName : undefined;
+        const target = typeof data.value === "string" ? data.value.trim() : "";
+        if (!target) {
+          syncModelsToPlugin();
+          return;
+        }
+        const res = selectConfiguredModel(target);
+        if (res.ok && res.active) {
+          console.log(`[Bridge] Switched active model to: ${res.active}`);
+          syncModelsToPlugin();
+          const msg = res.warning
+            ? `モデルを ${res.active} に切り替えました。（注意: ${res.warning}）`
+            : `モデルを ${res.active} (${res.selected?.name ?? res.active}) に切り替えました！`;
+          void notifyPlayer(playerName, msg);
+        } else {
+          void notifyPlayer(playerName, `モデル切替失敗: ${res.error ?? "unknown error"}`);
+        }
       }
       return;
     }
@@ -659,12 +810,50 @@ async function main() {
       return;
     }
 
+    if (req.method === "GET" && url === "/models") {
+      try {
+        const list = listConfiguredModels();
+        res.writeHead(200, { "content-type": "application/json" });
+        res.end(JSON.stringify({ ok: true, ...list }));
+      } catch (err) {
+        res.writeHead(500, { "content-type": "application/json" });
+        res.end(JSON.stringify({ ok: false, error: err instanceof Error ? err.message : String(err) }));
+      }
+      return;
+    }
+
+    if (req.method === "POST" && url === "/model") {
+      try {
+        const body = await readJsonBody(req);
+        const target = typeof body.target === "string" ? body.target.trim() : "";
+        const result = selectConfiguredModel(target);
+        if (!result.ok) {
+          res.writeHead(400, { "content-type": "application/json" });
+          res.end(JSON.stringify(result));
+          return;
+        }
+        console.log(`[Bridge] Switched active model via HTTP to: ${result.active}`);
+        syncModelsToPlugin();
+        res.writeHead(200, { "content-type": "application/json" });
+        res.end(JSON.stringify(result));
+      } catch (err) {
+        res.writeHead(500, { "content-type": "application/json" });
+        res.end(JSON.stringify({ ok: false, error: err instanceof Error ? err.message : String(err) }));
+      }
+      return;
+    }
+
     if (req.method === "GET" && url === "/health") {
+      let activeModel = "";
+      try {
+        activeModel = listConfiguredModels().active;
+      } catch {}
       res.writeHead(200, { "content-type": "application/json" });
       res.end(JSON.stringify({
         ok: true,
         wsConnected: mcClient.isConnected(),
         agentMode: AGENT_MODE,
+        activeModel,
         gatewayReady,
         gatewayWarm,
         thinking: currentThinking,

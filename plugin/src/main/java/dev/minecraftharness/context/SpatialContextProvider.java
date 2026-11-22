@@ -387,8 +387,9 @@ public final class SpatialContextProvider {
         }
 
         root.add("anchor", anchor.toJson());
+        root.addProperty("minecraftVersion", Bukkit.getMinecraftVersion());
         root.addProperty("worldTime", world.getTime());
-        root.addProperty("biome", world.getBiome(anchor.originX(), anchor.originY(), anchor.originZ()).getKey().getKey());
+        root.addProperty("biome", ((org.bukkit.Keyed) world.getBiome(anchor.originX(), anchor.originY(), anchor.originZ())).getKey().getKey());
 
         // Scan 5x5 local terrain heightmap relative to anchor (spacing 4 blocks: -8..+8)
         JsonArray heightRows = new JsonArray();

@@ -18,7 +18,10 @@ import dev.minecraftharness.fx.VfxEngine;
 import dev.minecraftharness.ws.HarnessWebSocketServer;
 import io.papermc.paper.event.player.AsyncChatEvent;
 import net.kyori.adventure.text.Component;
+import net.kyori.adventure.text.event.ClickEvent;
+import net.kyori.adventure.text.event.HoverEvent;
 import net.kyori.adventure.text.format.NamedTextColor;
+import net.kyori.adventure.text.format.TextDecoration;
 import net.kyori.adventure.text.serializer.plain.PlainTextComponentSerializer;
 import org.bukkit.Bukkit;
 import org.bukkit.Color;
@@ -63,7 +66,11 @@ public final class MinecraftHarnessPlugin extends JavaPlugin implements Listener
     private TelemetryHud telemetryHud;
     private HarnessWebSocketServer wsServer;
 
+    private record ModelEntry(String ref, String provider, String modelId, String name, String apiKeyEnv, boolean hasApiKey) {}
+
     private String reasoningMode = "low";
+    private String activeModelRef = "cerebras/moonshotai-kimi-k3.1-pro-trial";
+    private final List<ModelEntry> availableModels = new ArrayList<>();
 
     @Override
     public void onEnable() {
@@ -289,6 +296,30 @@ public final class MinecraftHarnessPlugin extends JavaPlugin implements Listener
                 telemetryHud.update(params, cameraRig.isFilmMode());
                 JsonObject r = new JsonObject();
                 r.addProperty("ok", true);
+                yield r;
+            }
+            case "sync_models" -> {
+                if (params.has("active") && params.get("active").isJsonPrimitive()) {
+                    activeModelRef = params.get("active").getAsString();
+                }
+                if (params.has("models") && params.get("models").isJsonArray()) {
+                    availableModels.clear();
+                    for (var el : params.getAsJsonArray("models")) {
+                        if (!el.isJsonObject()) continue;
+                        JsonObject m = el.getAsJsonObject();
+                        String ref = m.has("ref") && m.get("ref").isJsonPrimitive() ? m.get("ref").getAsString() : "";
+                        if (ref.isBlank()) continue;
+                        String provider = m.has("provider") && m.get("provider").isJsonPrimitive() ? m.get("provider").getAsString() : "";
+                        String modelId = m.has("modelId") && m.get("modelId").isJsonPrimitive() ? m.get("modelId").getAsString() : "";
+                        String name = m.has("name") && m.get("name").isJsonPrimitive() ? m.get("name").getAsString() : ref;
+                        String apiKeyEnv = m.has("apiKeyEnv") && m.get("apiKeyEnv").isJsonPrimitive() ? m.get("apiKeyEnv").getAsString() : "";
+                        boolean hasApiKey = m.has("hasApiKey") && m.get("hasApiKey").isJsonPrimitive() && m.get("hasApiKey").getAsBoolean();
+                        availableModels.add(new ModelEntry(ref, provider, modelId, name, apiKeyEnv, hasApiKey));
+                    }
+                }
+                JsonObject r = new JsonObject();
+                r.addProperty("ok", true);
+                r.addProperty("count", availableModels.size());
                 yield r;
             }
             case "camera_snap" -> handleCameraSnap(params, playerName);
@@ -686,9 +717,51 @@ public final class MinecraftHarnessPlugin extends JavaPlugin implements Listener
                 wsServer.broadcastEvent("player_command", ev);
                 sender.sendMessage("§bOpenClaw thinking level set to: §f" + lvl);
             }
+            case "model" -> {
+                if (wsServer.getConnectedClientCount() == 0) {
+                    sender.sendMessage("§cBridge is not connected on ws://127.0.0.1:25580");
+                    return true;
+                }
+                if (args.length < 2) {
+                    sender.sendMessage(Component.text("=== AI Models (クリックで切替) ===", NamedTextColor.AQUA));
+                    sender.sendMessage(Component.text("Active: ", NamedTextColor.GRAY)
+                        .append(Component.text(activeModelRef, NamedTextColor.GREEN, TextDecoration.BOLD)));
+                    if (availableModels.isEmpty()) {
+                        sender.sendMessage(Component.text("Use /mh model <cerebras|opendesign|commandcode>", NamedTextColor.GRAY));
+                        JsonObject ev = new JsonObject();
+                        ev.addProperty("command", "model");
+                        ev.addProperty("value", "");
+                        wsServer.broadcastEvent("player_command", ev);
+                        return true;
+                    }
+                    for (ModelEntry m : availableModels) {
+                        boolean isActive = m.ref().equals(activeModelRef);
+                        Component btn = Component.text(isActive ? " [●使用中] " : " [切替] ", isActive ? NamedTextColor.GREEN : NamedTextColor.GOLD)
+                            .clickEvent(ClickEvent.runCommand("/mh model " + m.ref()))
+                            .hoverEvent(HoverEvent.showText(Component.text("クリックで " + m.ref() + " に切替", NamedTextColor.AQUA)));
+                        Component line = btn
+                            .append(Component.text(m.ref(), isActive ? NamedTextColor.WHITE : NamedTextColor.AQUA))
+                            .append(Component.text(" — " + m.name(), NamedTextColor.GRAY));
+                        if (!m.hasApiKey() && !m.apiKeyEnv().isBlank()) {
+                            line = line.append(Component.text(" [要:" + m.apiKeyEnv() + "]", NamedTextColor.YELLOW));
+                        }
+                        sender.sendMessage(line);
+                    }
+                    return true;
+                }
+                String target = String.join(" ", java.util.Arrays.copyOfRange(args, 1, args.length)).trim();
+                JsonObject ev = new JsonObject();
+                ev.addProperty("command", "model");
+                ev.addProperty("value", target);
+                if (sender instanceof Player pl) {
+                    ev.addProperty("playerName", pl.getName());
+                }
+                wsServer.broadcastEvent("player_command", ev);
+            }
             case "status" -> {
                 sender.sendMessage("§b=== MinecraftHarness Status ===");
                 sender.sendMessage("§7Bridge WS clients: §f" + wsServer.getConnectedClientCount());
+                sender.sendMessage("§7Active model: §f" + activeModelRef);
                 sender.sendMessage("§7Brigadier: §f" + commandWirer.getBrigadierStatus());
                 sender.sendMessage("§7Thinking level: §f" + reasoningMode + " §7| Build speed: §f" + buildPacer.getSpeedMode());
                 sender.sendMessage("§bFilm Mode: §f" + cameraRig.isFilmMode() + " §7| HUD: §f" + telemetryHud.isHudEnabled() + " §7| VFX: §f" + vfxEngine.isFxEnabled() + " §7| SFX: §f" + vfxEngine.isSoundEnabled());
@@ -769,10 +842,23 @@ public final class MinecraftHarnessPlugin extends JavaPlugin implements Listener
     @Override
     public List<String> onTabComplete(CommandSender sender, Command command, String alias, String[] args) {
         if (args.length == 1) {
-            return List.of("undo", "reset", "shift", "film", "hud", "cam", "fx", "speed", "reasoning", "effort", "session", "history", "new", "stop", "status");
+            return List.of("model", "undo", "reset", "shift", "film", "hud", "cam", "fx", "speed", "reasoning", "effort", "session", "history", "new", "stop", "status");
         }
         if (args.length == 2) {
             return switch (args[0].toLowerCase(Locale.ROOT)) {
+                case "model" -> {
+                    List<String> suggestions = new ArrayList<>();
+                    java.util.LinkedHashSet<String> seen = new java.util.LinkedHashSet<>();
+                    for (ModelEntry m : availableModels) {
+                        if (!m.provider().isBlank() && seen.add(m.provider())) suggestions.add(m.provider());
+                        if (seen.add(m.ref())) suggestions.add(m.ref());
+                    }
+                    if (suggestions.isEmpty()) {
+                        suggestions.addAll(List.of("cerebras", "opendesign", "commandcode"));
+                    }
+                    String prefix = args[1].toLowerCase(Locale.ROOT);
+                    yield suggestions.stream().filter(s -> s.toLowerCase(Locale.ROOT).startsWith(prefix)).toList();
+                }
                 case "film", "fx" -> List.of("on", "off", "sound");
                 case "hud" -> List.of("on", "off", "reasoning");
                 case "cam" -> List.of("orbit", "dolly", "off");

@@ -108,7 +108,7 @@ public final class CommandWirer {
             getNodesMethod = ctxObj.getClass().getMethod("getNodes");
 
             brigadierReady = true;
-            brigadierStatus = "Brigadier 1.21.4 live dispatcher initialized";
+            brigadierStatus = "Brigadier " + Bukkit.getMinecraftVersion() + " live dispatcher initialized";
         } catch (Throwable t) {
             brigadierReady = false;
             brigadierStatus = "Fallback mode (" + t.getClass().getSimpleName() + ": " + t.getMessage() + ")";
